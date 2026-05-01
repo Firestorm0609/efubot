@@ -466,12 +466,66 @@ STAT_LABELS: Dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
+# Real eFootball training categories (each click raises ALL stats in group by 1)
+# Source: in-game Player Stats Upgrade screen
+# ---------------------------------------------------------------------------
+
+TRAINING_CATEGORIES: Dict[str, Dict] = {
+    "cat_finish": {
+        "label": "Finishing / Set Pieces / Curl",
+        "stats": ["finishing", "setPieceTaking", "curl"],
+    },
+    "cat_pass": {
+        "label": "Low Pass / Lofted Pass",
+        "stats": ["lowPass", "loftedPass"],
+    },
+    "cat_drib": {
+        "label": "Dribbling / Ball Control / Tight Possession",
+        "stats": ["dribbling", "ballControl", "tightPossession"],
+    },
+    "cat_aware": {
+        "label": "Offensive Awareness / Acceleration / Balance",
+        "stats": ["offensiveAwareness", "acceleration", "balance"],
+    },
+    "cat_power": {
+        "label": "Kicking Power / Speed / Stamina",
+        "stats": ["kickingPower", "speed", "stamina"],
+    },
+    "cat_aerial": {
+        "label": "Heading / Jump / Physical Contact",
+        "stats": ["heading", "jump", "physicalContact"],
+    },
+    "cat_defend": {
+        "label": "Def. Awareness / Ball Winning / Aggression / Def. Engagement",
+        "stats": ["defensiveAwareness", "ballWinning", "aggression", "defensiveEngagement"],
+    },
+    "cat_gk1": {
+        "label": "GK Awareness / Jump",
+        "stats": ["gkAwareness", "jump"],
+    },
+    "cat_gk2": {
+        "label": "GK Clearing / GK Reach",
+        "stats": ["gkClearing", "gkReach"],
+    },
+    "cat_gk3": {
+        "label": "GK Catching / GK Reflexes",
+        "stats": ["gkCatching", "gkReflexes"],
+    },
+}
+
+# ---------------------------------------------------------------------------
 # Optimizer
 # ---------------------------------------------------------------------------
 
-def get_stat_cost(points_spent: int) -> int:
-    """eFootball's tiered training cost: 1pt per 4 points spent, capped at 5."""
-    return min(points_spent // 4 + 1, 5)
+def get_click_cost(clicks_already: int) -> int:
+    """
+    eFootball actual category-click cost.
+    Clicks 1-4 on same category cost 1 PP each,
+    clicks 5-8 cost 2 PP each, 9-12 cost 3 PP each, and so on.
+
+      cost = (clicks_already // 4) + 1
+    """
+    return (clicks_already // 4) + 1
 
 
 def optimize_dna(
@@ -481,75 +535,112 @@ def optimize_dna(
     tier_key: str,
 ) -> Dict[str, Any]:
     """
-    Greedy DNA optimizer — allocates training points for a specific upgrade
-    at a chosen evolution tier. Weight/cost ratio drives every decision.
+    Category-click DNA optimizer — mirrors the real eFootball training system.
+
+    Each training "click" on a game category raises every stat in that group
+    by +1 simultaneously.  Cost per click escalates every 4 clicks within
+    the same category: clicks 1-4 = 1 PP, 5-8 = 2 PP, 9-12 = 3 PP, ...
+
+    The greedy algorithm picks whichever relevant category gives the best
+    weighted-benefit / PP-cost ratio on each step.
+
+    Budget = level_cap * tier_multiplier  (Progression Points).
+    DNA tiers are custom build intensities — not an in-game mechanic.
     """
-    base_stats = player_data.get("baseStats", {})
-    level_cap  = player_data.get("levelCap", 34)
+    base_stats   = player_data.get("baseStats", {})
+    level_cap    = player_data.get("levelCap", 34)
 
-    tier      = DNA_TIERS.get(tier_key, DNA_TIERS["elite"])
-    cat       = DNA_CATEGORIES.get(cat_key, {})
-    upgrade   = cat.get("upgrades", {}).get(upg_key, {})
+    tier    = DNA_TIERS.get(tier_key, DNA_TIERS["elite"])
+    cat     = DNA_CATEGORIES.get(cat_key, {})
+    upgrade = cat.get("upgrades", {}).get(upg_key, {})
 
-    total_budget = max(1, int(level_cap * 4 * tier["multiplier"]))
-    weights      = upgrade.get("stats", {})
-    rel_stats    = list(weights.keys())
+    # PP budget: level_cap × tier multiplier
+    total_budget = max(1, int(level_cap * tier["multiplier"]))
+    weights      = upgrade.get("stats", {})   # stat_key -> priority weight
 
-    allocations:    Dict[str, int] = {s: 0 for s in rel_stats}
-    spent_per_stat: Dict[str, int] = {s: 0 for s in rel_stats}
+    # Identify which game categories contain at least one weighted stat
+    relevant: Dict[str, Dict[str, float]] = {}
+    for gcat_id, gcat in TRAINING_CATEGORIES.items():
+        w_in_cat = {s: weights[s] for s in gcat["stats"] if weights.get(s, 0) > 0}
+        if w_in_cat:
+            relevant[gcat_id] = w_in_cat
+
+    # State
+    clicks: Dict[str, int] = {gcat: 0 for gcat in relevant}
+
+    # Track gains for every stat touched (weighted + bonus side-effects)
+    touched_stats: set = set()
+    for gcat_id in relevant:
+        touched_stats.update(TRAINING_CATEGORIES[gcat_id]["stats"])
+    stat_gains: Dict[str, int] = {s: 0 for s in touched_stats}
+
     budget_remaining = total_budget
 
     while budget_remaining > 0:
-        best_stat:  Optional[str]   = None
-        best_score: float           = -1.0
+        best_gcat:  Optional[str] = None
+        best_score: float         = -1.0
 
-        for s in rel_stats:
-            w = weights.get(s, 0.0)
-            if w == 0:
-                continue
-            current_val = base_stats.get(s, 0) + allocations[s]
-            if current_val >= 99:
-                continue
-            cost = get_stat_cost(spent_per_stat[s])
+        for gcat_id, w_stats in relevant.items():
+            cost = get_click_cost(clicks[gcat_id])
             if cost > budget_remaining:
                 continue
-            score = w / cost
+            # Only useful if at least one weighted stat can still improve
+            benefit = sum(
+                w for s, w in w_stats.items()
+                if base_stats.get(s, 0) + stat_gains.get(s, 0) < 99
+            )
+            if benefit <= 0:
+                continue
+            score = benefit / cost
             if score > best_score:
                 best_score = score
-                best_stat  = s
+                best_gcat  = gcat_id
 
-        if best_stat is None:
+        if best_gcat is None:
             break
 
-        cost = get_stat_cost(spent_per_stat[best_stat])
-        allocations[best_stat]    += 1
-        spent_per_stat[best_stat] += 1
-        budget_remaining          -= cost
+        cost = get_click_cost(clicks[best_gcat])
+        clicks[best_gcat] += 1
+        budget_remaining  -= cost
+
+        # +1 to every stat in the clicked game category (capped at 99)
+        for s in TRAINING_CATEGORIES[best_gcat]["stats"]:
+            if s in stat_gains and base_stats.get(s, 0) + stat_gains[s] < 99:
+                stat_gains[s] += 1
+
+    # Split gains into target (weighted) vs bonus (side-effect) stats
+    allocations = {s: stat_gains[s] for s in weights      if stat_gains.get(s, 0) > 0}
+    bonus_gains = {s: stat_gains[s] for s in touched_stats
+                   if s not in weights and stat_gains.get(s, 0) > 0}
 
     final_stats: Dict[str, int] = {}
     for s in TRAINABLE_STATS + GK_STATS:
-        final_stats[s] = base_stats.get(s, 0) + allocations.get(s, 0)
+        final_stats[s] = base_stats.get(s, 0) + stat_gains.get(s, 0)
+
+    points_used = total_budget - budget_remaining
 
     return {
-        "cat_key":       cat_key,
-        "upg_key":       upg_key,
-        "tier_key":      tier_key,
-        "cat_label":     cat.get("label", ""),
-        "upg_label":     upgrade.get("label", ""),
-        "upg_desc":      upgrade.get("desc", ""),
-        "tier_label":    tier["label"],
-        "tier_icon":     tier["icon"],
-        "mutation_note": upgrade.get("mutation_note"),
-        "allocations":   {s: v for s, v in allocations.items() if v > 0},
-        "base_stats":    base_stats,
-        "final_stats":   final_stats,
-        "points_used":   total_budget - budget_remaining,
+        "cat_key":          cat_key,
+        "upg_key":          upg_key,
+        "tier_key":         tier_key,
+        "cat_label":        cat.get("label", ""),
+        "upg_label":        upgrade.get("label", ""),
+        "upg_desc":         upgrade.get("desc", ""),
+        "tier_label":       tier["label"],
+        "tier_icon":        tier["icon"],
+        "mutation_note":    upgrade.get("mutation_note"),
+        "allocations":      allocations,
+        "bonus_gains":      bonus_gains,
+        "base_stats":       base_stats,
+        "final_stats":      final_stats,
+        "clicks":           {k: v for k, v in clicks.items() if v > 0},
+        "points_used":      points_used,
         "points_remaining": budget_remaining,
-        "level_cap":     level_cap,
-        "budget":        total_budget,
-        "player_name":   player_data.get("name", "Unknown"),
-        "position":      player_data.get("position", ""),
-        "overall":       player_data.get("overall", 0),
+        "level_cap":        level_cap,
+        "budget":           total_budget,
+        "player_name":      player_data.get("name", "Unknown"),
+        "position":         player_data.get("position", ""),
+        "overall":          player_data.get("overall", 0),
     }
 
 
@@ -560,27 +651,35 @@ def format_dna_result(result: Dict[str, Any]) -> str:
     ovr   = result.get("overall", 0)
     t_ico = result.get("tier_icon", "")
 
-    # Header
-    header_parts = [f"🧬 *{result['upg_label']}*"]
-    header_parts.append(f"_{result['upg_desc']}_")
-    header_parts.append("")
+    lines = [
+        f"🧬 *{result['upg_label']}*",
+        f"_{result['upg_desc']}_",
+        "",
+    ]
 
-    # Player identity line
     identity = f"👤 *{name}*"
-    if pos:  identity += f" · {pos}"
-    if ovr:  identity += f" · {ovr} OVR"
-    header_parts.append(identity)
+    if pos: identity += f" · {pos}"
+    if ovr: identity += f" · {ovr} OVR"
+    lines.append(identity)
+    lines.append(f"{result['cat_label']}  ·  {t_ico} *{result['tier_label']} DNA*")
+    lines.append(f"Budget: *{result['budget']} PP* (Level {result['level_cap']})")
+    lines.append("")
 
-    cat_line = f"{result['cat_label']}  ·  {t_ico} *{result['tier_label']} DNA*"
-    header_parts.append(cat_line)
-    header_parts.append(f"Budget: *{result['budget']}pts* (Level {result['level_cap']})")
-    header_parts.append("")
+    # --- Training click plan ---
+    if result.get("clicks"):
+        lines.append("*TRAINING PLAN:*")
+        for gcat_id, n_clicks in result["clicks"].items():
+            gcat_label = TRAINING_CATEGORIES[gcat_id]["label"]
+            # Calculate PP cost for these clicks
+            pp_cost = sum(get_click_cost(i) for i in range(n_clicks))
+            lines.append(f"  `{gcat_label:<44}` ×{n_clicks}  ({pp_cost} PP)")
+        lines.append("")
 
-    lines = header_parts + ["*STAT MUTATIONS:*"]
-
+    # --- Primary stat mutations ---
+    lines.append("*STAT MUTATIONS:*")
     if result["allocations"]:
         sorted_allocs = sorted(result["allocations"].items(), key=lambda x: -x[1])
-        for stat_key, pts in sorted_allocs[:8]:  # cap display at 8 stats
+        for stat_key, pts in sorted_allocs:
             label = STAT_LABELS.get(stat_key, stat_key)
             base  = result["base_stats"].get(stat_key, 0)
             final = result["final_stats"].get(stat_key, 0)
@@ -589,11 +688,21 @@ def format_dna_result(result: Dict[str, Any]) -> str:
     else:
         lines.append("  _All target stats already at cap (99)_")
 
+    # --- Bonus side-effect stats ---
+    if result.get("bonus_gains"):
+        lines.append("")
+        lines.append("*BONUS GAINS:*")
+        for stat_key, pts in sorted(result["bonus_gains"].items(), key=lambda x: -x[1]):
+            label = STAT_LABELS.get(stat_key, stat_key)
+            base  = result["base_stats"].get(stat_key, 0)
+            final = result["final_stats"].get(stat_key, 0)
+            lines.append(f"  `{label:<20}` {base} → *{final}* `+{pts}`")
+
     lines.append("")
-    pct_used = int(result['points_used'] / result['budget'] * 100) if result['budget'] else 0
+    pct = int(result["points_used"] / result["budget"] * 100) if result["budget"] else 0
     lines.append(
-        f"⚡ *{result['points_used']}* / {result['budget']} pts used ({pct_used}%)  "
-        f"·  {result['points_remaining']} remaining"
+        f"⚡ *{result['points_used']}* / {result['budget']} PP used ({pct}%)"
+        f"  ·  {result['points_remaining']} remaining"
     )
 
     if result.get("mutation_note"):
