@@ -181,7 +181,18 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
     }
 
     # --- Name ---
-    name = _extract_str(rsc, "name")
+    # Search for "name" only within the RSC line that contains "baseStats"
+    # so we don't accidentally match Next.js component names like
+    # "Next.MetadataOutlet" that appear earlier in the RSC payload.
+    name = None
+    bs_pos = rsc.find('"baseStats"')
+    if bs_pos >= 0:
+        line_start = rsc.rfind("\n", 0, bs_pos) + 1
+        line_end = rsc.find("\n", bs_pos)
+        chunk = rsc[line_start : line_end if line_end != -1 else len(rsc)]
+        name = _extract_str(chunk, "name")
+    if not name:
+        name = _extract_str(rsc, "name")  # last-resort: full scan
     if not name:
         title_m = re.search(r"<title[^>]*>([^<]+)</title>", html)
         if title_m:
