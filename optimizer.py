@@ -472,43 +472,43 @@ STAT_LABELS: Dict[str, str] = {
 
 TRAINING_CATEGORIES: Dict[str, Dict] = {
     "cat_finish": {
-        "label": "Finishing / Set Pieces / Curl",
+        "label": "Finishing, Set Pieces, Curl",
         "stats": ["finishing", "setPieceTaking", "curl"],
     },
     "cat_pass": {
-        "label": "Low Pass / Lofted Pass",
+        "label": "Low Pass, Lofted Pass",
         "stats": ["lowPass", "loftedPass"],
     },
     "cat_drib": {
-        "label": "Dribbling / Ball Control / Tight Possession",
+        "label": "Dribbling, Ball Control, Tight Possession",
         "stats": ["dribbling", "ballControl", "tightPossession"],
     },
     "cat_aware": {
-        "label": "Offensive Awareness / Acceleration / Balance",
+        "label": "Offensive Awareness, Acceleration, Balance",
         "stats": ["offensiveAwareness", "acceleration", "balance"],
     },
     "cat_power": {
-        "label": "Kicking Power / Speed / Stamina",
+        "label": "Kicking Power, Speed, Stamina",
         "stats": ["kickingPower", "speed", "stamina"],
     },
     "cat_aerial": {
-        "label": "Heading / Jump / Physical Contact",
+        "label": "Heading, Jumping, Physical Contact",
         "stats": ["heading", "jump", "physicalContact"],
     },
     "cat_defend": {
-        "label": "Def. Awareness / Ball Winning / Aggression / Def. Engagement",
-        "stats": ["defensiveAwareness", "ballWinning", "aggression", "defensiveEngagement"],
+        "label": "Defensive Awareness, Tackling, Aggression, Defensive Engagement",
+        "stats": ["defensiveAwareness", "tackling", "aggression", "defensiveEngagement"],
     },
     "cat_gk1": {
-        "label": "GK Awareness / Jump",
+        "label": "GK Awareness, Jumping",
         "stats": ["gkAwareness", "jump"],
     },
     "cat_gk2": {
-        "label": "GK Clearing / GK Reach",
-        "stats": ["gkClearing", "gkReach"],
+        "label": "GK Deflecting, GK Reach",
+        "stats": ["gkDeflecting", "gkReach"],
     },
     "cat_gk3": {
-        "label": "GK Catching / GK Reflexes",
+        "label": "GK Catching, GK Reflexes",
         "stats": ["gkCatching", "gkReflexes"],
     },
 }
