@@ -1,85 +1,431 @@
-"""Build optimizer for eFootball player training."""
+"""eFootball DNA Build Optimizer — player archetype engineering, not generic traits."""
 from typing import Dict, Any, Optional
 
-# Stats that matter for each playstyle
-PLAYSTYLES: Dict[str, Dict] = {
-    "dribble": {
-        "label": "Dribbling Focus",
-        "stats": {
-            "ballControl": 1.0, "dribbling": 1.0, "tightPossession": 0.8,
-            "acceleration": 0.5, "balance": 0.4, "speed": 0.3,
+# ---------------------------------------------------------------------------
+# DNA Categories — the full archetype engineering framework
+# ---------------------------------------------------------------------------
+
+DNA_CATEGORIES: Dict[str, Dict] = {
+    "athletic": {
+        "label": "⚡ Athletic Engine",
+        "desc": "Physical movement & athletic tuning",
+        "upgrades": {
+            "burst_accel": {
+                "label": "Burst Acceleration",
+                "desc": "Explosive first step — leave defenders behind in short bursts",
+                "stats": {"acceleration": 1.0, "speed": 0.5, "balance": 0.3},
+            },
+            "sprint_vel": {
+                "label": "Sprint Velocity",
+                "desc": "Top-end speed for outrunning the defensive line",
+                "stats": {"speed": 1.0, "acceleration": 0.5, "stamina": 0.3},
+            },
+            "agile_turns": {
+                "label": "Agile Turns",
+                "desc": "Sharp direction changes that leave defenders completely flat-footed",
+                "stats": {"balance": 1.0, "acceleration": 0.8, "dribbling": 0.4},
+            },
+            "expl_leap": {
+                "label": "Explosive Leap",
+                "desc": "Vertical burst power for aerial dominance",
+                "stats": {"jump": 1.0, "physicalContact": 0.5, "heading": 0.4},
+            },
+            "stamina_eng": {
+                "label": "Stamina Engine",
+                "desc": "Relentless 90-minute work rate that never drops",
+                "stats": {"stamina": 1.0, "speed": 0.3, "acceleration": 0.2},
+            },
+            "press_endure": {
+                "label": "Press Endurance",
+                "desc": "Maintain high-intensity pressing throughout the full 90 minutes",
+                "stats": {"stamina": 1.0, "aggression": 0.6, "speed": 0.3},
+            },
+            "cod": {
+                "label": "Change of Direction",
+                "desc": "Rapid 180° pivots — impossible to track in tight spaces",
+                "stats": {"balance": 1.0, "dribbling": 0.8, "acceleration": 0.5},
+            },
         },
     },
-    "shoot": {
-        "label": "Shooting Focus",
-        "stats": {
-            "finishing": 1.0, "kickingPower": 0.7, "ballControl": 0.5,
-            "curl": 0.5, "physicalContact": 0.4, "speed": 0.3,
+    "ball": {
+        "label": "🎮 Ball Mastery",
+        "desc": "Control, dribbling & possession behavior",
+        "upgrades": {
+            "tight_drib": {
+                "label": "Tight Space Dribbler",
+                "desc": "Navigate congested areas with elite close control",
+                "stats": {"tightPossession": 1.0, "dribbling": 0.9, "ballControl": 0.7, "balance": 0.4},
+            },
+            "press_resist": {
+                "label": "Press Resistance",
+                "desc": "Hold the ball under aggressive defensive pressure without losing it",
+                "stats": {"tightPossession": 1.0, "physicalContact": 0.7, "ballControl": 0.6, "balance": 0.5},
+            },
+            "one_touch": {
+                "label": "One Touch Control",
+                "desc": "Instant immaculate first touch under any condition",
+                "stats": {"ballControl": 1.0, "tightPossession": 0.7, "lowPass": 0.4},
+            },
+            "wf_ctrl": {
+                "label": "Weak Foot Control",
+                "desc": "Dominant two-footed dribbling — equally dangerous on either side",
+                "stats": {"dribbling": 1.0, "ballControl": 0.8, "balance": 0.5},
+            },
+            "shield": {
+                "label": "Shielding Ability",
+                "desc": "Body strength to protect possession against physical pressure",
+                "stats": {"physicalContact": 1.0, "tightPossession": 0.8, "balance": 0.6},
+            },
+            "chaos_drib": {
+                "label": "Chaos Dribbler",
+                "desc": "Street football flair — unpredictable moves that break defensive structure",
+                "stats": {"dribbling": 1.0, "tightPossession": 0.8, "acceleration": 0.6, "balance": 0.5},
+            },
         },
     },
-    "pass": {
-        "label": "Passing Focus",
-        "stats": {
-            "lowPass": 1.0, "loftedPass": 1.0, "ballControl": 0.8,
-            "curl": 0.5, "tightPossession": 0.3, "speed": 0.2,
+    "finishing": {
+        "label": "🎯 Finishing Lab",
+        "desc": "Granular, customisable shooting upgrades",
+        "upgrades": {
+            "shot_pow": {
+                "label": "Shot Power Boost",
+                "desc": "Explosive strike power — keepers don't react in time",
+                "stats": {"kickingPower": 1.0, "physicalContact": 0.4, "finishing": 0.3},
+            },
+            "finesse": {
+                "label": "Finesse Specialist",
+                "desc": "Curl precision shots into the top corner with the outside of the boot",
+                "stats": {"curl": 1.0, "finishing": 0.8, "ballControl": 0.4},
+            },
+            "first_time": {
+                "label": "First Time Finisher",
+                "desc": "Clinical one-touch finishes from crosses and through balls",
+                "stats": {"finishing": 1.0, "offensiveAwareness": 0.7, "ballControl": 0.5},
+            },
+            "wf_finish": {
+                "label": "Weak Foot Finishing",
+                "desc": "Increase weak foot finishing under pressure — catch keepers off guard",
+                "stats": {"finishing": 1.0, "curl": 0.6, "ballControl": 0.5},
+            },
+            "long_range": {
+                "label": "Long Range Cannons",
+                "desc": "Unstoppable outside-the-box threat — forces keepers off their line",
+                "stats": {"kickingPower": 1.0, "curl": 0.8, "finishing": 0.6},
+            },
+            "composed": {
+                "label": "Composed Finishing",
+                "desc": "Ice-cold in 1v1s — never rushes, always picks the corner",
+                "stats": {"finishing": 1.0, "offensiveAwareness": 0.8, "ballControl": 0.6},
+            },
+            "header": {
+                "label": "Header Accuracy",
+                "desc": "Dominant aerial finishing — wins and converts every cross",
+                "stats": {"heading": 1.0, "jump": 0.7, "physicalContact": 0.4},
+            },
+            "acrobatic": {
+                "label": "Acrobatic Finishing",
+                "desc": "Volleys, bicycle kicks and scissor finishes in danger areas",
+                "stats": {"finishing": 1.0, "balance": 0.7, "ballControl": 0.6},
+            },
+            "near_post": {
+                "label": "Near Post Killer",
+                "desc": "Deadly near-post runs and finishes that keepers never anticipate",
+                "stats": {"offensiveAwareness": 1.0, "finishing": 0.9, "acceleration": 0.5},
+            },
+            "free_kick": {
+                "label": "Free Kick Precision",
+                "desc": "Wall-beating dead ball specialist — every set piece is a threat",
+                "stats": {"setPieceTaking": 1.0, "curl": 0.9, "kickingPower": 0.4},
+            },
         },
     },
-    "speed": {
-        "label": "Speedster",
-        "stats": {
-            "speed": 1.0, "acceleration": 1.0, "balance": 0.5,
-            "dribbling": 0.3, "stamina": 0.3,
+    "iq": {
+        "label": "🧠 Football IQ",
+        "desc": "AI behavior & decision-making engineering",
+        "upgrades": {
+            "position": {
+                "label": "Intelligent Positioning",
+                "desc": "Always in the right place before the ball even arrives",
+                "stats": {"offensiveAwareness": 1.0, "defensiveAwareness": 0.5},
+            },
+            "late_runs": {
+                "label": "Late Box Runs",
+                "desc": "Ghosting into the box at the perfect moment — consistently unmarked",
+                "stats": {"offensiveAwareness": 1.0, "acceleration": 0.7, "stamina": 0.4},
+            },
+            "space_create": {
+                "label": "Space Creator",
+                "desc": "Off-ball movement that opens lanes and drags defenders out of shape",
+                "stats": {"offensiveAwareness": 1.0, "acceleration": 0.6, "lowPass": 0.4},
+            },
+            "counter_read": {
+                "label": "Counter Attack Reader",
+                "desc": "Instant transition trigger — first to react when possession switches",
+                "stats": {"offensiveAwareness": 0.8, "speed": 0.8, "acceleration": 0.7},
+            },
+            "pass_vision": {
+                "label": "Passing Vision",
+                "desc": "Sees the killer pass before anyone else — threads needles through defenses",
+                "stats": {"loftedPass": 1.0, "lowPass": 0.9, "offensiveAwareness": 0.7},
+            },
+            "tempo": {
+                "label": "Tempo Controller",
+                "desc": "Dictates the pace of play — accelerates or slows the game at will",
+                "stats": {"lowPass": 1.0, "ballControl": 0.8, "tightPossession": 0.7},
+            },
+            "kill_pass": {
+                "label": "Killer Through Balls",
+                "desc": "Thread the needle between defenders for clean 1v1s",
+                "stats": {"loftedPass": 1.0, "lowPass": 0.8, "offensiveAwareness": 0.7},
+            },
+            "tactical_disc": {
+                "label": "Tactical Discipline",
+                "desc": "Structure-first mentality — holds shape and position under pressure",
+                "stats": {"defensiveAwareness": 1.0, "offensiveAwareness": 0.6, "stamina": 0.5},
+            },
+        },
+    },
+    "mutation": {
+        "label": "🚀 Playstyle Mutation",
+        "desc": "Transform roles — changes behavior patterns, not just numbers",
+        "upgrades": {
+            "false_9": {
+                "label": "False 9 Conversion",
+                "desc": "Turn striker into a deep-dropping creator — pulls defenders, creates space",
+                "stats": {"offensiveAwareness": 1.0, "ballControl": 0.9, "lowPass": 0.9, "tightPossession": 0.8, "acceleration": 0.5},
+                "mutation_note": "Drops between lines · Creates midfield overloads · Triggers runs for CF partners",
+            },
+            "inside_fwd": {
+                "label": "Inside Forward",
+                "desc": "Convert winger to inside cutter — comes inside, shoots with strong foot",
+                "stats": {"dribbling": 1.0, "finishing": 0.9, "curl": 0.8, "ballControl": 0.7, "acceleration": 0.5},
+                "mutation_note": "Cuts inside from wide · Bends shots across keeper · Creates own shooting lanes",
+            },
+            "libero": {
+                "label": "Libero CB",
+                "desc": "Make CB play like a sweeper who starts attacks from deep",
+                "stats": {"defensiveAwareness": 0.9, "lowPass": 1.0, "loftedPass": 0.8, "ballControl": 0.7, "speed": 0.5},
+                "mutation_note": "Carries ball forward · Switches play · Reads danger before it develops",
+            },
+            "deep_play": {
+                "label": "Deep Playmaker",
+                "desc": "Transform CAM into a deep-lying orchestrator who controls tempo",
+                "stats": {"lowPass": 1.0, "loftedPass": 0.9, "tightPossession": 0.9, "ballControl": 0.8, "stamina": 0.5},
+                "mutation_note": "Drops into midfield · Distributes quickly · Dictates the game's rhythm",
+            },
+            "press_str": {
+                "label": "High Press Striker",
+                "desc": "Relentless high-press false 9 with explosive acceleration and aerial threat",
+                "stats": {"aggression": 1.0, "stamina": 0.9, "speed": 0.8, "acceleration": 0.8, "defensiveAwareness": 0.5},
+                "mutation_note": "Hunts the ball high up · Closes GK aggressively · Forces defensive errors",
+            },
+            "inverted_fb": {
+                "label": "Inverted Fullback",
+                "desc": "Make fullback drift inside as a third central midfielder",
+                "stats": {"lowPass": 1.0, "ballControl": 0.9, "offensiveAwareness": 0.8, "tightPossession": 0.7, "acceleration": 0.4},
+                "mutation_note": "Tucks into midfield · Creates central overloads · Recycles possession",
+            },
+            "target_man": {
+                "label": "Target Man",
+                "desc": "Convert poacher into a hold-up, link-play striker",
+                "stats": {"physicalContact": 1.0, "heading": 0.9, "tightPossession": 0.8, "jump": 0.7, "ballControl": 0.6},
+                "mutation_note": "Holds up play · Wins every aerial duel · Brings teammates into the game",
+            },
+            "box_crash": {
+                "label": "Box Crashing Midfielder",
+                "desc": "Turn CM into a late-arriving goal threat from midfield",
+                "stats": {"offensiveAwareness": 1.0, "finishing": 0.9, "acceleration": 0.7, "stamina": 0.6, "ballControl": 0.5},
+                "mutation_note": "Times late box runs perfectly · Scores from midfield · Engine-box hybrid",
+            },
+        },
+    },
+    "pressing": {
+        "label": "🔥 Pressing & Intensity",
+        "desc": "Aggression, pressing & defensive workrate",
+        "upgrades": {
+            "relentless": {
+                "label": "Relentless Press",
+                "desc": "Never gives the opponent time on the ball — suffocates from front",
+                "stats": {"aggression": 1.0, "stamina": 0.9, "speed": 0.6, "defensiveAwareness": 0.5},
+            },
+            "counter_press": {
+                "label": "Counter Press Beast",
+                "desc": "Instant ball recovery within 5 seconds of losing possession",
+                "stats": {"aggression": 1.0, "speed": 0.9, "acceleration": 0.8, "stamina": 0.6},
+            },
+            "intercept": {
+                "label": "Interception Hunter",
+                "desc": "Reads passing lanes and jumps routes before the ball arrives",
+                "stats": {"defensiveAwareness": 1.0, "ballWinning": 0.8, "acceleration": 0.5},
+            },
+            "man_mark": {
+                "label": "Man Mark Specialist",
+                "desc": "Locks onto the opponent's key player and completely neutralizes them",
+                "stats": {"defensiveAwareness": 1.0, "aggression": 0.7, "stamina": 0.7, "speed": 0.5},
+            },
+            "aggr_tackle": {
+                "label": "Aggressive Tackler",
+                "desc": "Hard-nosed ball winner who dominates every 50/50 physical duel",
+                "stats": {"ballWinning": 1.0, "defensiveEngagement": 0.9, "aggression": 0.7, "physicalContact": 0.6},
+            },
+            "rec_sprint": {
+                "label": "Recovery Sprinting",
+                "desc": "Gets behind the ball faster than anyone else on the pitch",
+                "stats": {"speed": 1.0, "acceleration": 0.9, "stamina": 0.6, "defensiveAwareness": 0.4},
+            },
+            "duel_mon": {
+                "label": "Duel Monster",
+                "desc": "Wins physical 1v1 ground battles with complete dominance",
+                "stats": {"physicalContact": 1.0, "defensiveEngagement": 0.9, "ballWinning": 0.8, "aggression": 0.6},
+            },
+        },
+    },
+    "wide": {
+        "label": "🪽 Wide Threat",
+        "desc": "Dynamic winger & wide player identities",
+        "upgrades": {
+            "touchline": {
+                "label": "Touchline Sprinter",
+                "desc": "Beats fullbacks with pure electric pace down the flank",
+                "stats": {"speed": 1.0, "acceleration": 0.9, "stamina": 0.4},
+            },
+            "inv_cutter": {
+                "label": "Inverted Cutter",
+                "desc": "Cuts inside to devastate defenses with the strong foot",
+                "stats": {"dribbling": 1.0, "finishing": 0.8, "curl": 0.7, "acceleration": 0.6},
+            },
+            "cross_mach": {
+                "label": "Crossing Machine",
+                "desc": "Elite delivery from wide positions — every cross creates danger",
+                "stats": {"loftedPass": 1.0, "curl": 0.8, "speed": 0.4},
+            },
+            "one_v_one": {
+                "label": "1v1 Destroyer",
+                "desc": "Takes on and beats defenders consistently in wide areas",
+                "stats": {"dribbling": 1.0, "tightPossession": 0.9, "acceleration": 0.7, "balance": 0.5},
+            },
+            "wide_play": {
+                "label": "Wide Playmaker",
+                "desc": "Creates from wide — links play and switches the field intelligently",
+                "stats": {"lowPass": 1.0, "loftedPass": 0.8, "ballControl": 0.7, "tightPossession": 0.6},
+            },
+            "early_cross": {
+                "label": "Early Cross Specialist",
+                "desc": "First-time delivery before the defense sets — catches them off guard",
+                "stats": {"loftedPass": 1.0, "curl": 0.7, "offensiveAwareness": 0.6, "speed": 0.4},
+            },
         },
     },
     "defend": {
-        "label": "Defender",
-        "stats": {
-            "defensiveAwareness": 1.0, "ballWinning": 1.0,
-            "defensiveEngagement": 0.8, "physicalContact": 0.7,
-            "jump": 0.5, "speed": 0.3,
+        "label": "🛡️ Defensive Core",
+        "desc": "Modern, dynamic defender identities",
+        "upgrades": {
+            "bw_dest": {
+                "label": "Ball Winning Destroyer",
+                "desc": "Aggressive physical presence who dominates every duel",
+                "stats": {"ballWinning": 1.0, "defensiveEngagement": 0.9, "physicalContact": 0.7, "aggression": 0.6},
+            },
+            "sweeper": {
+                "label": "Sweeper Defender",
+                "desc": "Reads the game early — covers space and cleans up behind the line",
+                "stats": {"defensiveAwareness": 1.0, "speed": 0.7, "acceleration": 0.6, "ballWinning": 0.4},
+            },
+            "build_up_cb": {
+                "label": "Build Up Defender",
+                "desc": "Comfortable on the ball — starts attacks from the back line",
+                "stats": {"lowPass": 1.0, "ballControl": 0.8, "defensiveAwareness": 0.6, "loftedPass": 0.5},
+            },
+            "aerial_dom": {
+                "label": "Aerial Dominance",
+                "desc": "Wins every header — owns set pieces at both ends of the pitch",
+                "stats": {"heading": 1.0, "jump": 1.0, "physicalContact": 0.7},
+            },
+            "last_man": {
+                "label": "Last Man Specialist",
+                "desc": "Ice-cool in 1v1s — holds shape, never dives in recklessly",
+                "stats": {"defensiveAwareness": 1.0, "defensiveEngagement": 0.8, "speed": 0.6},
+            },
+            "front_foot": {
+                "label": "Front Foot Defender",
+                "desc": "Steps out aggressively to win the ball high — calculated risks that pay off",
+                "stats": {"aggression": 1.0, "ballWinning": 0.9, "speed": 0.7, "defensiveAwareness": 0.6},
+            },
+            "tac_intercept": {
+                "label": "Tactical Interceptor",
+                "desc": "Reads the opponent's play — kills attacks before they even start",
+                "stats": {"defensiveAwareness": 1.0, "ballWinning": 0.7, "lowPass": 0.4},
+            },
         },
     },
-    "physical": {
-        "label": "Physical Strength",
-        "stats": {
-            "physicalContact": 1.0, "balance": 0.7, "jump": 0.7,
-            "kickingPower": 0.4, "stamina": 0.4,
-        },
-    },
-    "balanced": {
-        "label": "Balanced Build",
-        "stats": {
-            "ballControl": 0.7, "dribbling": 0.6, "finishing": 0.6,
-            "lowPass": 0.6, "defensiveAwareness": 0.4, "speed": 0.4,
-            "acceleration": 0.4, "physicalContact": 0.4,
-        },
-    },
-    "goalkeeper": {
-        "label": "Goalkeeper",
-        "stats": {
-            "gkAwareness": 1.0, "gkCatching": 1.0, "gkClearing": 0.8,
-            "gkReflexes": 1.0, "gkReach": 0.8,
-        },
-    },
-    "playmaker": {
-        "label": "Playmaker",
-        "stats": {
-            "ballControl": 1.0, "tightPossession": 0.9, "lowPass": 0.9,
-            "loftedPass": 0.7, "offensiveAwareness": 0.6, "curl": 0.5,
-            "stamina": 0.4,
-        },
-    },
-    "striker": {
-        "label": "Striker",
-        "stats": {
-            "finishing": 1.0, "offensiveAwareness": 0.9, "ballControl": 0.6,
-            "kickingPower": 0.6, "speed": 0.5, "acceleration": 0.5,
-            "physicalContact": 0.4,
+    "signature": {
+        "label": "⭐ Signature Builds",
+        "desc": "Pre-engineered legendary player archetypes",
+        "upgrades": {
+            "prime_messi": {
+                "label": "Prime Messi+",
+                "desc": "Explosive burst · Tight dribbling · Outside box threat · Through balls · Agile turns",
+                "stats": {
+                    "acceleration": 0.9, "tightPossession": 1.0, "dribbling": 0.9,
+                    "finishing": 0.8, "loftedPass": 0.8, "curl": 0.7, "balance": 0.6,
+                },
+                "mutation_note": "The complete attacker — destroys with dribbling, creates with vision, finishes with precision",
+            },
+            "haaland": {
+                "label": "Haaland Monster",
+                "desc": "Sprint velocity · Physical dominance · Header accuracy · Shot power · Near post killer",
+                "stats": {
+                    "speed": 1.0, "physicalContact": 0.9, "heading": 0.9,
+                    "kickingPower": 1.0, "finishing": 0.9, "jump": 0.7, "offensiveAwareness": 0.8,
+                },
+                "mutation_note": "Pure unstoppable force — dominates physically and finishes clinically every time",
+            },
+            "kante": {
+                "label": "Kanté Engine",
+                "desc": "Relentless press · Recovery sprint · Interception hunter · Stamina · Tactical discipline",
+                "stats": {
+                    "aggression": 1.0, "speed": 0.9, "ballWinning": 1.0,
+                    "stamina": 0.9, "defensiveAwareness": 0.9, "acceleration": 0.7,
+                },
+                "mutation_note": "Covers every blade of grass — the engine that never, ever stops running",
+            },
+            "tiki_maestro": {
+                "label": "Tiki-Taka Maestro",
+                "desc": "Ball control · Short passing · Tight possession · Tempo control · Off-ball movement",
+                "stats": {
+                    "ballControl": 1.0, "lowPass": 1.0, "tightPossession": 1.0,
+                    "offensiveAwareness": 0.7, "stamina": 0.5, "curl": 0.4,
+                },
+                "mutation_note": "The heartbeat of possession football — never loses the ball, always finds the right pass",
+            },
+            "wing_dest": {
+                "label": "Wing Destroyer",
+                "desc": "Pace · Dribbling · Cutting inside · Finishing · Crossing — the complete wide threat",
+                "stats": {
+                    "speed": 0.9, "acceleration": 0.9, "dribbling": 1.0,
+                    "finishing": 0.8, "loftedPass": 0.7, "curl": 0.6, "balance": 0.6,
+                },
+                "mutation_note": "Terrorizes fullbacks from wide — scores, creates and destroys in equal measure",
+            },
         },
     },
 }
 
-# All trainable outfield stats
+# ---------------------------------------------------------------------------
+# DNA Evolution Tiers — the progression system
+# ---------------------------------------------------------------------------
+
+DNA_TIERS: Dict[str, Dict] = {
+    "rookie":      {"label": "Rookie",        "icon": "🥉", "multiplier": 0.7},
+    "elite":       {"label": "Elite",         "icon": "🥈", "multiplier": 1.0},
+    "world_class": {"label": "World Class",   "icon": "🥇", "multiplier": 1.4},
+    "legendary":   {"label": "Legendary",     "icon": "💎", "multiplier": 1.8},
+    "goat":        {"label": "GOAT Mutation", "icon": "👑", "multiplier": 2.5},
+}
+
+# ---------------------------------------------------------------------------
+# Stat metadata
+# ---------------------------------------------------------------------------
+
 TRAINABLE_STATS = [
     "offensiveAwareness", "ballControl", "dribbling", "tightPossession",
     "lowPass", "loftedPass", "finishing", "setPieceTaking", "curl",
@@ -88,80 +434,76 @@ TRAINABLE_STATS = [
     "physicalContact", "jump", "stamina",
 ]
 
-# GK-only stats
 GK_STATS = ["gkAwareness", "gkCatching", "gkClearing", "gkReflexes", "gkReach"]
 
-# Human-readable stat labels for display
 STAT_LABELS: Dict[str, str] = {
-    "offensiveAwareness": "Offensive Awareness",
-    "ballControl": "Ball Control",
-    "dribbling": "Dribbling",
-    "tightPossession": "Tight Possession",
-    "lowPass": "Low Pass",
-    "loftedPass": "Lofted Pass",
-    "finishing": "Finishing",
-    "setPieceTaking": "Set Piece Taking",
-    "curl": "Curl",
-    "heading": "Heading",
-    "defensiveAwareness": "Defensive Awareness",
-    "ballWinning": "Ball Winning",
+    "offensiveAwareness":  "Offensive Awareness",
+    "ballControl":         "Ball Control",
+    "dribbling":           "Dribbling",
+    "tightPossession":     "Tight Possession",
+    "lowPass":             "Low Pass",
+    "loftedPass":          "Lofted Pass",
+    "finishing":           "Finishing",
+    "setPieceTaking":      "Set Piece Taking",
+    "curl":                "Curl",
+    "heading":             "Heading",
+    "defensiveAwareness":  "Def. Awareness",
+    "ballWinning":         "Ball Winning",
     "defensiveEngagement": "Def. Engagement",
-    "aggression": "Aggression",
-    "kickingPower": "Kicking Power",
-    "speed": "Speed",
-    "acceleration": "Acceleration",
-    "balance": "Balance",
-    "physicalContact": "Physical Contact",
-    "jump": "Jump",
-    "stamina": "Stamina",
-    "gkAwareness": "GK Awareness",
-    "gkCatching": "GK Catching",
-    "gkClearing": "GK Clearing",
-    "gkReflexes": "GK Reflexes",
-    "gkReach": "GK Reach",
+    "aggression":          "Aggression",
+    "kickingPower":        "Kicking Power",
+    "speed":               "Speed",
+    "acceleration":        "Acceleration",
+    "balance":             "Balance",
+    "physicalContact":     "Physical Contact",
+    "jump":                "Jump",
+    "stamina":             "Stamina",
+    "gkAwareness":         "GK Awareness",
+    "gkCatching":          "GK Catching",
+    "gkClearing":          "GK Clearing",
+    "gkReflexes":          "GK Reflexes",
+    "gkReach":             "GK Reach",
 }
 
+# ---------------------------------------------------------------------------
+# Optimizer
+# ---------------------------------------------------------------------------
 
 def get_stat_cost(points_spent: int) -> int:
-    """
-    Cost per additional training point, following eFootball's 4-2-3-4-5 tier system.
-    Each tier covers 4 points spent, cost increments by 1 per tier.
-    """
-    tier = points_spent // 4  # 0-based tier
-    return min(tier + 1, 5)
+    """eFootball's tiered training cost: 1pt per 4 points spent, capped at 5."""
+    return min(points_spent // 4 + 1, 5)
 
 
-def optimize_build(
+def optimize_dna(
     player_data: Dict[str, Any],
-    playstyle: str,
-    total_budget: Optional[int] = None,
+    cat_key: str,
+    upg_key: str,
+    tier_key: str,
 ) -> Dict[str, Any]:
     """
-    Greedy optimizer: at each step pick the stat with the best weight/cost ratio.
-    Respects the 99-cap per stat and the training point budget.
+    Greedy DNA optimizer — allocates training points for a specific upgrade
+    at a chosen evolution tier. Weight/cost ratio drives every decision.
     """
     base_stats = player_data.get("baseStats", {})
-    level_cap = player_data.get("levelCap", 34)
+    level_cap  = player_data.get("levelCap", 34)
 
-    if total_budget is None:
-        # eFootball grants 4 training points per level
-        total_budget = level_cap * 4
+    tier      = DNA_TIERS.get(tier_key, DNA_TIERS["elite"])
+    cat       = DNA_CATEGORIES.get(cat_key, {})
+    upgrade   = cat.get("upgrades", {}).get(upg_key, {})
 
-    if playstyle not in PLAYSTYLES:
-        playstyle = "balanced"
+    total_budget = max(1, int(level_cap * 4 * tier["multiplier"]))
+    weights      = upgrade.get("stats", {})
+    rel_stats    = list(weights.keys())
 
-    weights = PLAYSTYLES[playstyle]["stats"]
-    relevant_stats = list(weights.keys())
-
-    allocations: Dict[str, int] = {s: 0 for s in relevant_stats}
-    spent_per_stat: Dict[str, int] = {s: 0 for s in relevant_stats}
+    allocations:    Dict[str, int] = {s: 0 for s in rel_stats}
+    spent_per_stat: Dict[str, int] = {s: 0 for s in rel_stats}
     budget_remaining = total_budget
 
     while budget_remaining > 0:
-        best_stat: Optional[str] = None
-        best_score = -1.0
+        best_stat:  Optional[str]   = None
+        best_score: float           = -1.0
 
-        for s in relevant_stats:
+        for s in rel_stats:
             w = weights.get(s, 0.0)
             if w == 0:
                 continue
@@ -174,77 +516,88 @@ def optimize_build(
             score = w / cost
             if score > best_score:
                 best_score = score
-                best_stat = s
+                best_stat  = s
 
         if best_stat is None:
             break
 
         cost = get_stat_cost(spent_per_stat[best_stat])
-        allocations[best_stat] += 1
+        allocations[best_stat]    += 1
         spent_per_stat[best_stat] += 1
-        budget_remaining -= cost
+        budget_remaining          -= cost
 
-    # Merge allocations into final stats
     final_stats: Dict[str, int] = {}
     for s in TRAINABLE_STATS + GK_STATS:
         final_stats[s] = base_stats.get(s, 0) + allocations.get(s, 0)
 
-    points_used = total_budget - budget_remaining
-
     return {
-        "playstyle": PLAYSTYLES[playstyle]["label"],
-        "playstyle_key": playstyle,
-        "allocations": {s: v for s, v in allocations.items() if v > 0},
-        "base_stats": base_stats,
-        "final_stats": final_stats,
-        "points_used": points_used,
+        "cat_key":       cat_key,
+        "upg_key":       upg_key,
+        "tier_key":      tier_key,
+        "cat_label":     cat.get("label", ""),
+        "upg_label":     upgrade.get("label", ""),
+        "upg_desc":      upgrade.get("desc", ""),
+        "tier_label":    tier["label"],
+        "tier_icon":     tier["icon"],
+        "mutation_note": upgrade.get("mutation_note"),
+        "allocations":   {s: v for s, v in allocations.items() if v > 0},
+        "base_stats":    base_stats,
+        "final_stats":   final_stats,
+        "points_used":   total_budget - budget_remaining,
         "points_remaining": budget_remaining,
-        "level_cap": level_cap,
-        "budget": total_budget,
-        "player_name": player_data.get("name", "Unknown"),
-        "position": player_data.get("position", ""),
-        "overall": player_data.get("overall", 0),
+        "level_cap":     level_cap,
+        "budget":        total_budget,
+        "player_name":   player_data.get("name", "Unknown"),
+        "position":      player_data.get("position", ""),
+        "overall":       player_data.get("overall", 0),
     }
 
 
-def format_build_result(result: Dict[str, Any]) -> str:
-    """
-    Format build result for Telegram (uses *bold* and `code` — Markdown parse mode).
-    """
-    name = result.get("player_name", "")
-    pos = result.get("position", "")
-    ovr = result.get("overall", 0)
+def format_dna_result(result: Dict[str, Any]) -> str:
+    """Format DNA build result for Telegram Markdown."""
+    name  = result.get("player_name", "")
+    pos   = result.get("position", "")
+    ovr   = result.get("overall", 0)
+    t_ico = result.get("tier_icon", "")
 
-    header = f"*{result['playstyle']} Build*"
-    if name:
-        sub = f"_{name}"
-        if pos:
-            sub += f" · {pos}"
-        if ovr:
-            sub += f" · {ovr} OVR"
-        sub += "_"
-        header = f"{header}\n{sub}"
+    # Header
+    header_parts = [f"🧬 *{result['upg_label']}*"]
+    header_parts.append(f"_{result['upg_desc']}_")
+    header_parts.append("")
 
-    lines = [
-        header,
-        "",
-        f"Level Cap: *{result['level_cap']}* | "
-        f"Points used: *{result['points_used']}* | "
-        f"Remaining: *{result['points_remaining']}*",
-        "",
-        "*Key Stat Changes:*",
-    ]
+    # Player identity line
+    identity = f"👤 *{name}*"
+    if pos:  identity += f" · {pos}"
+    if ovr:  identity += f" · {ovr} OVR"
+    header_parts.append(identity)
+
+    cat_line = f"{result['cat_label']}  ·  {t_ico} *{result['tier_label']} DNA*"
+    header_parts.append(cat_line)
+    header_parts.append(f"Budget: *{result['budget']}pts* (Level {result['level_cap']})")
+    header_parts.append("")
+
+    lines = header_parts + ["*STAT MUTATIONS:*"]
 
     if result["allocations"]:
-        for stat_key, pts in sorted(
-            result["allocations"].items(), key=lambda x: -x[1]
-        ):
+        sorted_allocs = sorted(result["allocations"].items(), key=lambda x: -x[1])
+        for stat_key, pts in sorted_allocs[:8]:  # cap display at 8 stats
             label = STAT_LABELS.get(stat_key, stat_key)
-            base = result["base_stats"].get(stat_key, 0)
+            base  = result["base_stats"].get(stat_key, 0)
             final = result["final_stats"].get(stat_key, 0)
-            bar = "█" * min(pts, 10)  # visual bar capped at 10
-            lines.append(f"  `{label:<22}` {base} → *{final}* `+{pts}` {bar}")
+            bar   = "█" * min(pts, 10)
+            lines.append(f"  `{label:<20}` {base} → *{final}* `+{pts}` {bar}")
     else:
-        lines.append("  _No stats allocated — all may be capped at 99_")
+        lines.append("  _All target stats already at cap (99)_")
+
+    lines.append("")
+    pct_used = int(result['points_used'] / result['budget'] * 100) if result['budget'] else 0
+    lines.append(
+        f"⚡ *{result['points_used']}* / {result['budget']} pts used ({pct_used}%)  "
+        f"·  {result['points_remaining']} remaining"
+    )
+
+    if result.get("mutation_note"):
+        lines.append("")
+        lines.append(f"💡 _{result['mutation_note']}_")
 
     return "\n".join(lines)

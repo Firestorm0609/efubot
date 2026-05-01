@@ -1,4 +1,4 @@
-"""eFootball Build Bot — fully inline-button driven, no slash commands."""
+"""eFootball DNA Build Bot — player archetype engineering via inline buttons."""
 import logging
 import sys
 import os
@@ -16,7 +16,10 @@ from telegram.ext import (
 )
 
 from scraper import search_players, fetch_player_detail, fetch_player_index
-from optimizer import optimize_build, PLAYSTYLES, format_build_result
+from optimizer import (
+    DNA_CATEGORIES, DNA_TIERS,
+    optimize_dna, format_dna_result,
+)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -48,13 +51,41 @@ def get_index() -> list:
 
 
 # ---------------------------------------------------------------------------
+# Static text
+# ---------------------------------------------------------------------------
+
+MAIN_MENU_TEXT = (
+    "🧬 *eFootball DNA Lab*\n\n"
+    "Engineer any player's DNA — choose upgrades, mutate playstyles "
+    "and apply evolution tiers.\n\n"
+    "_This isn't traits. This is archetype engineering._"
+)
+
+GUIDE_TEXT = (
+    "🧬 *DNA Engineering Guide*\n\n"
+    "*9 Categories to engineer your player:*\n\n"
+    "⚡ *Athletic Engine* — physical & movement tuning\n"
+    "🎮 *Ball Mastery* — control & dribbling behavior\n"
+    "🎯 *Finishing Lab* — granular shooting upgrades\n"
+    "🧠 *Football IQ* — AI behavior & decision-making\n"
+    "🚀 *Playstyle Mutation* — full role transformations\n"
+    "🔥 *Pressing & Intensity* — aggression engine\n"
+    "🪽 *Wide Threat* — dynamic winger identities\n"
+    "🛡️ *Defensive Core* — modern defender builds\n"
+    "⭐ *Signature Builds* — pre-engineered legends\n\n"
+    "*5 DNA Evolution Tiers:*\n"
+    "🥉 Rookie  ·  🥈 Elite  ·  🥇 World Class  ·  💎 Legendary  ·  👑 GOAT Mutation"
+)
+
+
+# ---------------------------------------------------------------------------
 # Keyboards
 # ---------------------------------------------------------------------------
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔍  Search Player", callback_data="nav:search")],
-        [InlineKeyboardButton("📋  Playstyles Guide", callback_data="nav:playstyles")],
+        [InlineKeyboardButton("📖  DNA Guide",     callback_data="nav:guide")],
     ])
 
 
@@ -70,52 +101,77 @@ def search_results_keyboard(results: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def playstyle_keyboard(player_id: int, exclude: str = "") -> InlineKeyboardMarkup:
-    buttons = [
-        InlineKeyboardButton(
-            val["label"],
-            callback_data=f"build:{player_id}:{ps}",
-        )
-        for ps, val in PLAYSTYLES.items()
-        if ps != exclude
-    ]
-    rows = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
+def category_keyboard(player_id: int) -> InlineKeyboardMarkup:
+    """Show all 9 DNA category buttons."""
+    rows = []
+    cats = list(DNA_CATEGORIES.items())
+    for i in range(0, len(cats), 2):
+        row = []
+        for cat_key, cat in cats[i:i+2]:
+            # Extract just the emoji + short name
+            label = cat["label"]
+            row.append(InlineKeyboardButton(
+                label,
+                callback_data=f"cat:{player_id}:{cat_key}",
+            ))
+        rows.append(row)
     rows.append([InlineKeyboardButton("⬅️  Back to search", callback_data="nav:search")])
     return InlineKeyboardMarkup(rows)
 
 
-def build_result_keyboard(player_id: int, current_playstyle: str) -> InlineKeyboardMarkup:
-    buttons = [
-        InlineKeyboardButton(
-            val["label"],
-            callback_data=f"build:{player_id}:{ps}",
-        )
-        for ps, val in PLAYSTYLES.items()
-        if ps != current_playstyle
-    ]
-    rows = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
-    rows.append([InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")])
+def upgrade_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
+    """Show all upgrades within a category."""
+    cat = DNA_CATEGORIES.get(cat_key, {})
+    upgrades = cat.get("upgrades", {})
+    rows = []
+    upg_list = list(upgrades.items())
+    for i in range(0, len(upg_list), 2):
+        row = []
+        for upg_key, upg in upg_list[i:i+2]:
+            row.append(InlineKeyboardButton(
+                upg["label"],
+                callback_data=f"upg:{player_id}:{cat_key}:{upg_key}",
+            ))
+        rows.append(row)
+    rows.append([InlineKeyboardButton(
+        "⬅️  Back to categories",
+        callback_data=f"player:{player_id}",
+    )])
     return InlineKeyboardMarkup(rows)
 
 
+def tier_keyboard(player_id: int, cat_key: str, upg_key: str) -> InlineKeyboardMarkup:
+    """Show the 5 DNA evolution tiers."""
+    rows = []
+    for tier_key, tier in DNA_TIERS.items():
+        rows.append([InlineKeyboardButton(
+            f"{tier['icon']}  {tier['label']}",
+            callback_data=f"tier:{player_id}:{cat_key}:{upg_key}:{tier_key}",
+        )])
+    rows.append([InlineKeyboardButton(
+        "⬅️  Back to upgrades",
+        callback_data=f"cat:{player_id}:{cat_key}",
+    )])
+    return InlineKeyboardMarkup(rows)
+
+
+def result_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
+    """After showing result: try another upgrade or go home."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "🔄  Try another upgrade",
+            callback_data=f"cat:{player_id}:{cat_key}",
+        )],
+        [InlineKeyboardButton(
+            "🧬  New category",
+            callback_data=f"player:{player_id}",
+        )],
+        [InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")],
+    ])
+
+
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-MAIN_MENU_TEXT = (
-    "⚽ *eFootball Build Bot*\n\n"
-    "Search for any player and get an optimised training build "
-    "for your preferred playstyle — all live from efhub.com."
-)
-
-PLAYSTYLES_TEXT = (
-    "*Available Playstyles:*\n\n"
-    + "\n".join(f"• *{val['label']}*" for val in PLAYSTYLES.values())
-)
-
-
-# ---------------------------------------------------------------------------
-# Entry point — /start initiates the conversation
+# Entry point — /start
 # ---------------------------------------------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -129,7 +185,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
-# Navigation callbacks
+# nav:* callbacks
 # ---------------------------------------------------------------------------
 
 async def nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,7 +204,7 @@ async def nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if dest == "search":
         context.user_data.clear()
         await query.edit_message_text(
-            "🔍 *Player Search*\n\nType a player name and send it:",
+            "🔍 *Player Search*\n\nType a player name:",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️  Back", callback_data="nav:main")]
@@ -156,9 +212,9 @@ async def nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return SEARCHING
 
-    if dest == "playstyles":
+    if dest == "guide":
         await query.edit_message_text(
-            PLAYSTYLES_TEXT, parse_mode="Markdown",
+            GUIDE_TEXT, parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️  Back", callback_data="nav:main")]
             ]),
@@ -169,7 +225,7 @@ async def nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
-# Search: receive typed player name
+# Text input: player search
 # ---------------------------------------------------------------------------
 
 async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -178,7 +234,6 @@ async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please type a player name.")
         return SEARCHING
 
-    # Delete the user's text message to keep the chat tidy
     try:
         await update.message.delete()
     except Exception:
@@ -202,7 +257,7 @@ async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔍  Search again", callback_data="nav:search")],
-                [InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")],
+                [InlineKeyboardButton("🏠  Main Menu",    callback_data="nav:main")],
             ]),
         )
         return MAIN
@@ -211,7 +266,7 @@ async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_message(
         update.effective_chat.id,
-        f"*Results for '{query_text}':*\n\nSelect a player:",
+        f"*Results for '{query_text}':*\n\nSelect a player to engineer:",
         parse_mode="Markdown",
         reply_markup=search_results_keyboard(results),
     )
@@ -219,16 +274,52 @@ async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
-# Player selected → show playstyle picker
+# player:{id} → show DNA categories
 # ---------------------------------------------------------------------------
 
 async def player_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    _, player_id_str = query.data.split(":", 1)
-    player_id = int(player_id_str)
+    player_id = int(query.data.split(":", 1)[1])
     context.user_data["player_id"] = player_id
+
+    results = context.user_data.get("last_results", [])
+    player_name = next(
+        (r["name"] for r in results if r["id"] == player_id),
+        f"Player {player_id}",
+    )
+    player_ovr = next(
+        (r["overall"] for r in results if r["id"] == player_id),
+        "",
+    )
+
+    ovr_str = f" · {player_ovr} OVR" if player_ovr else ""
+    await query.edit_message_text(
+        f"🧬 *{player_name}*{ovr_str}\n\n"
+        "Choose a *DNA category* to engineer:",
+        parse_mode="Markdown",
+        reply_markup=category_keyboard(player_id),
+    )
+    return MAIN
+
+
+# ---------------------------------------------------------------------------
+# cat:{player_id}:{cat_key} → show upgrades in category
+# ---------------------------------------------------------------------------
+
+async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split(":")   # cat : player_id : cat_key
+    player_id = int(parts[1])
+    cat_key   = parts[2]
+
+    cat = DNA_CATEGORIES.get(cat_key)
+    if not cat:
+        await query.answer("Unknown category.", show_alert=True)
+        return MAIN
 
     results = context.user_data.get("last_results", [])
     player_name = next(
@@ -237,35 +328,81 @@ async def player_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await query.edit_message_text(
-        f"🎯 *{player_name}*\n\nChoose a playstyle to optimise for:",
+        f"*{cat['label']}*\n_{cat['desc']}_\n\n"
+        f"👤 *{player_name}* — choose an upgrade:",
         parse_mode="Markdown",
-        reply_markup=playstyle_keyboard(player_id),
+        reply_markup=upgrade_keyboard(player_id, cat_key),
     )
     return MAIN
 
 
 # ---------------------------------------------------------------------------
-# Build callback → run optimizer and show result
+# upg:{player_id}:{cat_key}:{upg_key} → show tier picker
 # ---------------------------------------------------------------------------
 
-async def build_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer("Calculating…")
+    await query.answer()
 
-    parts = query.data.split(":")  # "build:{player_id}:{playstyle}"
-    if len(parts) < 3:
-        await query.edit_message_text("❌ Invalid button data.")
-        return MAIN
-
+    parts     = query.data.split(":")   # upg : player_id : cat_key : upg_key
     player_id = int(parts[1])
-    playstyle = parts[2]
+    cat_key   = parts[2]
+    upg_key   = parts[3]
 
-    if playstyle not in PLAYSTYLES:
-        await query.edit_message_text(f"❌ Unknown playstyle: {playstyle}")
+    cat     = DNA_CATEGORIES.get(cat_key, {})
+    upgrade = cat.get("upgrades", {}).get(upg_key)
+    if not upgrade:
+        await query.answer("Unknown upgrade.", show_alert=True)
         return MAIN
 
-    await query.edit_message_text("⚙️ Optimising build…")
+    results = context.user_data.get("last_results", [])
+    player_name = next(
+        (r["name"] for r in results if r["id"] == player_id),
+        f"Player {player_id}",
+    )
 
+    await query.edit_message_text(
+        f"*{upgrade['label']}*\n"
+        f"_{upgrade['desc']}_\n\n"
+        f"👤 *{player_name}*\n\n"
+        "Choose your *DNA Evolution Tier:*",
+        parse_mode="Markdown",
+        reply_markup=tier_keyboard(player_id, cat_key, upg_key),
+    )
+    return MAIN
+
+
+# ---------------------------------------------------------------------------
+# tier:{player_id}:{cat_key}:{upg_key}:{tier_key} → run build, show result
+# ---------------------------------------------------------------------------
+
+async def tier_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Engineering DNA…")
+
+    parts     = query.data.split(":")   # tier : player_id : cat_key : upg_key : tier_key
+    player_id = int(parts[1])
+    cat_key   = parts[2]
+    upg_key   = parts[3]
+    tier_key  = parts[4]
+
+    # Validate
+    if cat_key not in DNA_CATEGORIES:
+        await query.edit_message_text("❌ Unknown category.")
+        return MAIN
+
+    cat = DNA_CATEGORIES[cat_key]
+    if upg_key not in cat.get("upgrades", {}):
+        await query.edit_message_text("❌ Unknown upgrade.")
+        return MAIN
+
+    if tier_key not in DNA_TIERS:
+        await query.edit_message_text("❌ Unknown tier.")
+        return MAIN
+
+    await query.edit_message_text("⚙️ Engineering your DNA build…")
+
+    # Fetch player data
     try:
         player_data = fetch_player_detail(player_id)
     except Exception as exc:
@@ -287,29 +424,35 @@ async def build_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN
 
+    # Run optimizer
     try:
-        result = optimize_build(player_data, playstyle)
-        text = format_build_result(result)
+        result = optimize_dna(player_data, cat_key, upg_key, tier_key)
+        text   = format_dna_result(result)
     except Exception as exc:
         logger.error("Optimizer error for player %s: %s", player_id, exc)
-        await query.edit_message_text("❌ Build optimisation failed. Please try again.")
+        await query.edit_message_text(
+            "❌ DNA engineering failed. Please try again.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")]
+            ]),
+        )
         return MAIN
 
     await query.edit_message_text(
         text,
         parse_mode="Markdown",
-        reply_markup=build_result_keyboard(player_id, playstyle),
+        reply_markup=result_keyboard(player_id, cat_key),
     )
     return MAIN
 
 
 # ---------------------------------------------------------------------------
-# Fallback: unexpected text while not searching
+# Fallback: unexpected text outside search state
 # ---------------------------------------------------------------------------
 
 async def unexpected_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Use the buttons below to navigate ⬇️",
+        "Use the buttons to navigate ⬇️",
         reply_markup=main_menu_keyboard(),
     )
     return MAIN
@@ -334,9 +477,11 @@ def main():
         entry_points=[CommandHandler("start", start)],
         states={
             MAIN: [
-                CallbackQueryHandler(nav_callback, pattern=r"^nav:"),
-                CallbackQueryHandler(player_callback, pattern=r"^player:"),
-                CallbackQueryHandler(build_callback, pattern=r"^build:"),
+                CallbackQueryHandler(nav_callback,      pattern=r"^nav:"),
+                CallbackQueryHandler(player_callback,   pattern=r"^player:"),
+                CallbackQueryHandler(category_callback, pattern=r"^cat:"),
+                CallbackQueryHandler(upgrade_callback,  pattern=r"^upg:"),
+                CallbackQueryHandler(tier_callback,     pattern=r"^tier:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, unexpected_message),
             ],
             SEARCHING: [
@@ -351,7 +496,7 @@ def main():
 
     app.add_handler(conv)
 
-    print("Bot started. Press Ctrl+C to stop.")
+    print("🧬 DNA Lab Bot started. Press Ctrl+C to stop.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
