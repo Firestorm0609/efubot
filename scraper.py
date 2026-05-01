@@ -1,4 +1,16 @@
-"""Scraper for efhub.com player data."""
+"""Scraper for efhub.com player data.
+
+efhub.com uses Next.js App Router (not Pages Router), so player data is
+embedded in RSC (React Server Components) payload chunks:
+
+    self.__next_f.push([1,"<json-escaped RSC text>"])
+
+Each chunk's string is JSON-encoded, so \" → " after json.loads().
+The unescaped text contains lines like:
+    f:["$","$L3f",null,{"baseStats":{...},"name":"...","position":"..."}]
+
+We collect all chunks, unescape them, concatenate, then extract fields.
+"""
 import re
 import json
 import logging
@@ -8,7 +20,6 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://efhub.com"
-# Version param stripped — requests without it still work and won't break on rotation
 INDEX_URL = f"{BASE_URL}/search/player-index.json"
 BOOSTS_URL = f"{BASE_URL}/data/boosts.json"
 
@@ -21,6 +32,89 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+# Matches: self.__next_f.push([1,"<escaped-content>"])
+_RSC_PUSH_RE = re.compile(
+    r'self\.__next_f\.push\(\[1,"((?:[^"\\]|\\.)*)"\]\)',
+    re.DOTALL,
+)
+
+
+# ---------------------------------------------------------------------------
+# Low-level helpers
+# ---------------------------------------------------------------------------
+
+def _collect_rsc_text(html: str) -> str:
+    """Unescape and concatenate all RSC push chunks from the page HTML."""
+    parts = []
+    for m in _RSC_PUSH_RE.finditer(html):
+        try:
+            # The captured group is the JSON-encoded string value; wrapping
+            # it in quotes lets json.loads unescape it correctly.
+            parts.append(json.loads(f'"{m.group(1)}"'))
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return "\n".join(parts)
+
+
+def _extract_json_object(text: str, key: str) -> Optional[dict]:
+    """Extract the first JSON object for *key* using brace-depth counting.
+
+    Handles arbitrarily nested objects — unlike a simple [^}]+ regex which
+    stops at the first closing brace it encounters.
+    """
+    pattern = rf'"{re.escape(key)}"\s*:\s*\{{'
+    m = re.search(pattern, text)
+    if not m:
+        return None
+
+    start = m.end() - 1   # index of the opening '{'
+    depth = 0
+    in_string = False
+    escape_next = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                raw = text[start : i + 1]
+                try:
+                    return json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    logger.debug("JSON parse error extracting '%s': %s", key, exc)
+                    return None
+    return None
+
+
+def _extract_str(text: str, key: str) -> Optional[str]:
+    m = re.search(rf'"{re.escape(key)}"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', text)
+    return m.group(1) if m else None
+
+
+def _extract_int(text: str, *keys: str) -> Optional[int]:
+    for key in keys:
+        m = re.search(rf'"{re.escape(key)}"\s*:\s*(\d+)', text)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def fetch_player_index() -> list:
     """Fetch the full player index (id, name, overall)."""
@@ -50,78 +144,8 @@ def search_players(query: str, index_data: Optional[list] = None) -> list:
     return sorted(results, key=lambda x: -x["overall"])[:10]
 
 
-def _extract_json_value(html: str, key: str) -> Optional[str]:
-    """Extract a JSON value for a given key from raw HTML."""
-    # Handles both quoted strings and numeric values
-    pattern = rf'"{re.escape(key)}":\s*("(?:[^"\\]|\\.)*"|\d+|true|false|null|\{{[^}}]*\}})'
-    m = re.search(pattern, html)
-    return m.group(1) if m else None
-
-
-def _extract_json_object(html: str, key: str) -> Optional[dict]:
-    """Extract a JSON object value for a given key using bracket counting.
-
-    Unlike a simple [^}]+ regex this handles arbitrarily nested objects,
-    so it works even when baseStats (or any other field) contains nested
-    dicts like {"speed": {"value": 90, "rank": 1}, ...}.
-    """
-    pattern = rf'"{re.escape(key)}"\s*:\s*\{{'
-    m = re.search(pattern, html)
-    if not m:
-        return None
-
-    start = m.end() - 1  # position of the opening '{'
-    depth = 0
-    i = start
-    while i < len(html):
-        ch = html[i]
-        if ch == '{':
-            depth += 1
-        elif ch == '}':
-            depth -= 1
-            if depth == 0:
-                raw = html[start:i + 1]
-                try:
-                    return json.loads(raw)
-                except json.JSONDecodeError as exc:
-                    logger.debug("JSON parse error for key '%s': %s", key, exc)
-                    return None
-        i += 1
-    return None
-
-
-def _parse_next_data(html: str) -> Optional[dict]:
-    """Extract and parse the __NEXT_DATA__ JSON blob embedded by Next.js."""
-    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(1))
-    except json.JSONDecodeError:
-        return None
-
-
-def _player_data_from_next(next_data: dict) -> Optional[dict]:
-    """Walk the __NEXT_DATA__ tree to find the player props object."""
-    try:
-        # Common Next.js shape: pageProps -> player / playerData / data
-        page_props = next_data["props"]["pageProps"]
-        for key in ("player", "playerData", "data"):
-            if key in page_props and isinstance(page_props[key], dict):
-                return page_props[key]
-        # Some versions nest under dehydratedState
-        dehydrated = page_props.get("dehydratedState", {})
-        for query in dehydrated.get("queries", []):
-            data = query.get("state", {}).get("data")
-            if isinstance(data, dict) and "baseStats" in data:
-                return data
-    except (KeyError, TypeError):
-        pass
-    return None
-
-
 def fetch_player_detail(player_id: int) -> Optional[dict]:
-    """Fetch player detail, preferring __NEXT_DATA__ over raw-HTML regex."""
+    """Fetch player detail from the efhub.com RSC payload."""
     url = f"{BASE_URL}/en/players/{player_id}"
     try:
         r = requests.get(url, timeout=15, headers=HEADERS)
@@ -131,87 +155,59 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
         return None
 
     html = r.text
-    player_data: dict = {}
 
-    # ------------------------------------------------------------------ #
-    # Strategy 1: parse the structured __NEXT_DATA__ blob (most reliable) #
-    # ------------------------------------------------------------------ #
-    next_data = _parse_next_data(html)
-    raw: Optional[dict] = None
-    if next_data:
-        raw = _player_data_from_next(next_data)
+    # Collect and unescape all RSC push chunks
+    rsc = _collect_rsc_text(html)
 
-    if raw and "baseStats" in raw:
-        player_data["baseStats"] = raw["baseStats"]
-        player_data["name"] = raw.get("name", raw.get("slug", f"Player {player_id}"))
-        if isinstance(player_data["name"], str) and "-" in player_data["name"] and " " not in player_data["name"]:
-            player_data["name"] = player_data["name"].replace("-", " ").title()
-        for key in ("position", "playingStyle"):
-            if key in raw:
-                player_data[key] = raw[key]
-        for cap_key in ("initialLevelCap", "levelCap"):
-            if cap_key in raw:
-                player_data["levelCap"] = int(raw[cap_key])
-                break
-        for ovr_key in ("overall", "overallRating"):
-            if ovr_key in raw:
-                player_data["overall"] = int(raw[ovr_key])
-                break
-        if "initialBoostLeftId" in raw:
-            player_data["boostId"] = int(raw["initialBoostLeftId"])
-        player_data["playerId"] = str(player_id)
-        return player_data
-
-    # ------------------------------------------------------------------ #
-    # Strategy 2: bracket-counting regex fallback (handles nested objects) #
-    # ------------------------------------------------------------------ #
-    logger.debug("__NEXT_DATA__ parse failed for player %s — falling back to regex", player_id)
-
-    base_stats = _extract_json_object(html, "baseStats")
-    if not base_stats:
-        logger.warning("No baseStats found for player %s", player_id)
+    if not rsc:
+        logger.warning("No RSC chunks found for player %s", player_id)
         return None
-    player_data["baseStats"] = base_stats
 
-    # --- Player name ---
-    name_match = re.search(r'"name"\s*:\s*"([^"]+)"', html)
-    if name_match:
-        player_data["name"] = name_match.group(1)
-    else:
-        slug_match = re.search(r'"slug"\s*:\s*"([^"]+)"', html)
-        if slug_match:
-            player_data["name"] = slug_match.group(1).replace("-", " ").title()
-        else:
-            player_data["name"] = f"Player {player_id}"
+    if "baseStats" not in rsc:
+        logger.warning("No baseStats found in RSC payload for player %s", player_id)
+        return None
 
-    # --- Position ---
-    pos_match = re.search(r'"position"\s*:\s*"([^"]+)"', html)
-    if pos_match:
-        player_data["position"] = pos_match.group(1)
+    # --- baseStats (the only required field) ---
+    base_stats = _extract_json_object(rsc, "baseStats")
+    if not base_stats:
+        logger.warning("Could not parse baseStats for player %s", player_id)
+        return None
 
-    # --- Level cap ---
-    for cap_key in ("initialLevelCap", "levelCap"):
-        lc_match = re.search(rf'"{cap_key}"\s*:\s*(\d+)', html)
-        if lc_match:
-            player_data["levelCap"] = int(lc_match.group(1))
-            break
+    player_data: dict = {
+        "playerId": str(player_id),
+        "baseStats": base_stats,
+    }
 
-    # --- Playing style ---
-    ps_match = re.search(r'"playingStyle"\s*:\s*"([^"]+)"', html)
-    if ps_match:
-        player_data["playingStyle"] = ps_match.group(1)
+    # --- Name: prefer explicit field, fall back to slug in <title> ---
+    name = _extract_str(rsc, "name")
+    if not name:
+        title_m = re.search(r"<title[^>]*>([^<]+)</title>", html)
+        if title_m:
+            # e.g. "K. Kvaratskhelia — 85 OVR | eFHUB"
+            name = title_m.group(1).split("—")[0].strip()
+    player_data["name"] = name or f"Player {player_id}"
 
-    # --- Overall rating ---
-    ovr_match = re.search(r'"overall(?:Rating)?"\s*:\s*(\d+)', html)
-    if ovr_match:
-        player_data["overall"] = int(ovr_match.group(1))
+    # --- Other scalar fields ---
+    pos = _extract_str(rsc, "position")
+    if pos:
+        player_data["position"] = pos
 
-    # --- Boost info ---
-    boost_match = re.search(r'"initialBoostLeftId"\s*:\s*(\d+)', html)
-    if boost_match:
-        player_data["boostId"] = int(boost_match.group(1))
+    ps = _extract_str(rsc, "playingStyle")
+    if ps:
+        player_data["playingStyle"] = ps
 
-    player_data["playerId"] = str(player_id)
+    lc = _extract_int(rsc, "initialLevelCap", "levelCap")
+    if lc is not None:
+        player_data["levelCap"] = lc
+
+    ovr = _extract_int(rsc, "overall", "overallRating")
+    if ovr is not None:
+        player_data["overall"] = ovr
+
+    boost = _extract_int(rsc, "initialBoostLeftId")
+    if boost is not None:
+        player_data["boostId"] = boost
+
     return player_data
 
 
@@ -237,11 +233,11 @@ if __name__ == "__main__":
         print(f"Testing detail fetch for {messi[0]['e']} (id={pid})")
         detail = fetch_player_detail(pid)
         if detail:
-            print(f"Name: {detail.get('name')}")
-            print(f"Position: {detail.get('position')}")
+            print(f"Name:      {detail.get('name')}")
+            print(f"Position:  {detail.get('position')}")
             print(f"Level cap: {detail.get('levelCap')}")
-            print(f"Overall: {detail.get('overall')}")
-            print(f"Base stats sample: {dict(list(detail.get('baseStats', {}).items())[:5])}")
+            print(f"Overall:   {detail.get('overall')}")
+            print(f"baseStats: {dict(list(detail.get('baseStats', {}).items())[:5])}")
         else:
             print("Failed to fetch detail")
     else:
