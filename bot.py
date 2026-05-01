@@ -8,12 +8,13 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv()
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, ConversationHandler, filters,
     ContextTypes,
 )
+from telegram.error import TelegramError
 
 from scraper import search_players, fetch_player_detail, fetch_player_index
 from optimizer import (
@@ -79,6 +80,43 @@ GUIDE_TEXT = (
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _card_label(r: dict) -> str:
+    """Build a search result button label that distinguishes card versions."""
+    label = f"{r['name']}  ({r['overall']} OVR)"
+    extras = []
+    if r.get("position"):
+        extras.append(r["position"])
+    if r.get("cardType"):
+        extras.append(r["cardType"])
+    if extras:
+        label += f"  · {' · '.join(extras)}"
+    return label
+
+
+def _card_caption(detail: dict) -> str:
+    """Build the photo caption for the player confirmation screen."""
+    name      = detail.get("name", "Unknown")
+    overall   = detail.get("overall", "?")
+    position  = detail.get("position", "")
+    style     = detail.get("playingStyle", "")
+    card_type = detail.get("cardType", "")
+    level_cap = detail.get("levelCap", "")
+
+    lines = [f"*{name}*  ·  {overall} OVR"]
+    if card_type:
+        lines.append(f"🃏 {card_type}")
+    if position or style:
+        lines.append(f"📍 {position}  ·  {style}" if position and style else f"📍 {position or style}")
+    if level_cap:
+        lines.append(f"⬆️ Level cap: {level_cap}")
+    lines.append("\nIs this the card you want to engineer?")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Keyboards
 # ---------------------------------------------------------------------------
 
@@ -92,7 +130,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
 def search_results_keyboard(results: list) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(
-            f"{r['name']}  ({r['overall']} OVR)",
+            _card_label(r),
             callback_data=f"player:{r['id']}",
         )]
         for r in results[:8]
@@ -101,17 +139,21 @@ def search_results_keyboard(results: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def confirm_keyboard(player_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅  Yes, engineer this card", callback_data=f"confirm:{player_id}")],
+        [InlineKeyboardButton("🔍  Back to results",         callback_data="nav:search")],
+    ])
+
+
 def category_keyboard(player_id: int) -> InlineKeyboardMarkup:
-    """Show all 9 DNA category buttons."""
     rows = []
     cats = list(DNA_CATEGORIES.items())
     for i in range(0, len(cats), 2):
         row = []
         for cat_key, cat in cats[i:i+2]:
-            # Extract just the emoji + short name
-            label = cat["label"]
             row.append(InlineKeyboardButton(
-                label,
+                cat["label"],
                 callback_data=f"cat:{player_id}:{cat_key}",
             ))
         rows.append(row)
@@ -120,7 +162,6 @@ def category_keyboard(player_id: int) -> InlineKeyboardMarkup:
 
 
 def upgrade_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
-    """Show all upgrades within a category."""
     cat = DNA_CATEGORIES.get(cat_key, {})
     upgrades = cat.get("upgrades", {})
     rows = []
@@ -135,13 +176,12 @@ def upgrade_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
         rows.append(row)
     rows.append([InlineKeyboardButton(
         "⬅️  Back to categories",
-        callback_data=f"player:{player_id}",
+        callback_data=f"confirm:{player_id}",
     )])
     return InlineKeyboardMarkup(rows)
 
 
 def tier_keyboard(player_id: int, cat_key: str, upg_key: str) -> InlineKeyboardMarkup:
-    """Show the 5 DNA evolution tiers."""
     rows = []
     for tier_key, tier in DNA_TIERS.items():
         rows.append([InlineKeyboardButton(
@@ -156,7 +196,6 @@ def tier_keyboard(player_id: int, cat_key: str, upg_key: str) -> InlineKeyboardM
 
 
 def result_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
-    """After showing result: try another upgrade or go home."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "🔄  Try another upgrade",
@@ -164,7 +203,7 @@ def result_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
         )],
         [InlineKeyboardButton(
             "🧬  New category",
-            callback_data=f"player:{player_id}",
+            callback_data=f"confirm:{player_id}",
         )],
         [InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")],
     ])
@@ -195,15 +234,17 @@ async def nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if dest == "main":
         context.user_data.clear()
-        await query.edit_message_text(
-            MAIN_MENU_TEXT, parse_mode="Markdown",
+        await _safe_edit_text(
+            query, MAIN_MENU_TEXT,
+            parse_mode="Markdown",
             reply_markup=main_menu_keyboard(),
         )
         return MAIN
 
     if dest == "search":
-        context.user_data.clear()
-        await query.edit_message_text(
+        context.user_data.pop("player_detail", None)
+        await _safe_edit_text(
+            query,
             "🔍 *Player Search*\n\nType a player name:",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
@@ -213,8 +254,8 @@ async def nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SEARCHING
 
     if dest == "guide":
-        await query.edit_message_text(
-            GUIDE_TEXT, parse_mode="Markdown",
+        await _safe_edit_text(
+            query, GUIDE_TEXT, parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️  Back", callback_data="nav:main")]
             ]),
@@ -274,7 +315,7 @@ async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
-# player:{id} → show DNA categories
+# player:{id} → fetch detail, show card photo confirmation
 # ---------------------------------------------------------------------------
 
 async def player_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -284,20 +325,84 @@ async def player_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player_id = int(query.data.split(":", 1)[1])
     context.user_data["player_id"] = player_id
 
-    results = context.user_data.get("last_results", [])
-    player_name = next(
-        (r["name"] for r in results if r["id"] == player_id),
-        f"Player {player_id}",
+    # Show a loading state
+    await _safe_edit_text(query, "⏳ Loading card…")
+
+    # Fetch full detail (needed for image + position + cardType)
+    try:
+        detail = fetch_player_detail(player_id)
+    except Exception as exc:
+        logger.error("Fetch error for player %s: %s", player_id, exc)
+        detail = None
+
+    if not detail:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "❌ Could not load player data. Try another card.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔍  Back to results", callback_data="nav:search")],
+            ]),
+        )
+        return MAIN
+
+    # Cache for later use in tier_callback so we don't fetch twice
+    context.user_data["player_detail"] = detail
+
+    caption = _card_caption(detail)
+    img_url = detail.get("imageUrl")
+
+    if img_url:
+        # Send a new photo message; delete the "Loading…" text message first
+        try:
+            await query.message.delete()
+        except TelegramError:
+            pass
+        try:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=img_url,
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=confirm_keyboard(player_id),
+            )
+            return MAIN
+        except TelegramError as e:
+            logger.warning("Failed to send card photo for player %s: %s", player_id, e)
+            # Fall through to text confirmation
+
+    # Fallback: text-only confirmation
+    await context.bot.send_message(
+        update.effective_chat.id,
+        caption,
+        parse_mode="Markdown",
+        reply_markup=confirm_keyboard(player_id),
     )
-    player_ovr = next(
-        (r["overall"] for r in results if r["id"] == player_id),
-        "",
-    )
+    return MAIN
+
+
+# ---------------------------------------------------------------------------
+# confirm:{id} → show DNA categories (works for both photo and text messages)
+# ---------------------------------------------------------------------------
+
+async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    player_id = int(query.data.split(":", 1)[1])
+    context.user_data["player_id"] = player_id
+
+    detail = context.user_data.get("player_detail", {})
+    player_name = detail.get("name") or f"Player {player_id}"
+    player_ovr  = detail.get("overall", "")
 
     ovr_str = f" · {player_ovr} OVR" if player_ovr else ""
-    await query.edit_message_text(
+    text = (
         f"🧬 *{player_name}*{ovr_str}\n\n"
-        "Choose a *DNA category* to engineer:",
+        "Choose a *DNA category* to engineer:"
+    )
+
+    await _safe_edit_text(
+        query, text,
         parse_mode="Markdown",
         reply_markup=category_keyboard(player_id),
     )
@@ -305,14 +410,14 @@ async def player_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
-# cat:{player_id}:{cat_key} → show upgrades in category
+# cat / upg / tier callbacks (unchanged logic, updated back buttons)
 # ---------------------------------------------------------------------------
 
 async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    parts = query.data.split(":")   # cat : player_id : cat_key
+    parts     = query.data.split(":")
     player_id = int(parts[1])
     cat_key   = parts[2]
 
@@ -321,13 +426,11 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Unknown category.", show_alert=True)
         return MAIN
 
-    results = context.user_data.get("last_results", [])
-    player_name = next(
-        (r["name"] for r in results if r["id"] == player_id),
-        f"Player {player_id}",
-    )
+    detail = context.user_data.get("player_detail", {})
+    player_name = detail.get("name") or f"Player {player_id}"
 
-    await query.edit_message_text(
+    await _safe_edit_text(
+        query,
         f"*{cat['label']}*\n_{cat['desc']}_\n\n"
         f"👤 *{player_name}* — choose an upgrade:",
         parse_mode="Markdown",
@@ -336,15 +439,11 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN
 
 
-# ---------------------------------------------------------------------------
-# upg:{player_id}:{cat_key}:{upg_key} → show tier picker
-# ---------------------------------------------------------------------------
-
 async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    parts     = query.data.split(":")   # upg : player_id : cat_key : upg_key
+    parts     = query.data.split(":")
     player_id = int(parts[1])
     cat_key   = parts[2]
     upg_key   = parts[3]
@@ -355,13 +454,11 @@ async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Unknown upgrade.", show_alert=True)
         return MAIN
 
-    results = context.user_data.get("last_results", [])
-    player_name = next(
-        (r["name"] for r in results if r["id"] == player_id),
-        f"Player {player_id}",
-    )
+    detail = context.user_data.get("player_detail", {})
+    player_name = detail.get("name") or f"Player {player_id}"
 
-    await query.edit_message_text(
+    await _safe_edit_text(
+        query,
         f"*{upgrade['label']}*\n"
         f"_{upgrade['desc']}_\n\n"
         f"👤 *{player_name}*\n\n"
@@ -372,51 +469,43 @@ async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN
 
 
-# ---------------------------------------------------------------------------
-# tier:{player_id}:{cat_key}:{upg_key}:{tier_key} → run build, show result
-# ---------------------------------------------------------------------------
-
 async def tier_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("Engineering DNA…")
 
-    parts     = query.data.split(":")   # tier : player_id : cat_key : upg_key : tier_key
+    parts     = query.data.split(":")
     player_id = int(parts[1])
     cat_key   = parts[2]
     upg_key   = parts[3]
     tier_key  = parts[4]
 
-    # Validate
     if cat_key not in DNA_CATEGORIES:
-        await query.edit_message_text("❌ Unknown category.")
+        await _safe_edit_text(query, "❌ Unknown category.")
         return MAIN
 
     cat = DNA_CATEGORIES[cat_key]
     if upg_key not in cat.get("upgrades", {}):
-        await query.edit_message_text("❌ Unknown upgrade.")
+        await _safe_edit_text(query, "❌ Unknown upgrade.")
         return MAIN
 
     if tier_key not in DNA_TIERS:
-        await query.edit_message_text("❌ Unknown tier.")
+        await _safe_edit_text(query, "❌ Unknown tier.")
         return MAIN
 
-    await query.edit_message_text("⚙️ Engineering your DNA build…")
+    await _safe_edit_text(query, "⚙️ Engineering your DNA build…")
 
-    # Fetch player data
-    try:
-        player_data = fetch_player_detail(player_id)
-    except Exception as exc:
-        logger.error("Fetch error for player %s: %s", player_id, exc)
-        await query.edit_message_text(
-            "❌ Failed to fetch player data. Try again.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")]
-            ]),
-        )
-        return MAIN
+    # Use cached detail if available; fetch only as fallback
+    player_data = context.user_data.get("player_detail")
+    if not player_data or "baseStats" not in player_data:
+        try:
+            player_data = fetch_player_detail(player_id)
+        except Exception as exc:
+            logger.error("Fetch error for player %s: %s", player_id, exc)
+            player_data = None
 
     if not player_data or "baseStats" not in player_data:
-        await query.edit_message_text(
+        await context.bot.send_message(
+            update.effective_chat.id,
             "❌ No stat data found for this player.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")]
@@ -424,13 +513,13 @@ async def tier_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN
 
-    # Run optimizer
     try:
         result = optimize_dna(player_data, cat_key, upg_key, tier_key)
         text   = format_dna_result(result)
     except Exception as exc:
         logger.error("Optimizer error for player %s: %s", player_id, exc)
-        await query.edit_message_text(
+        await context.bot.send_message(
+            update.effective_chat.id,
             "❌ DNA engineering failed. Please try again.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")]
@@ -438,8 +527,8 @@ async def tier_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN
 
-    await query.edit_message_text(
-        text,
+    await _safe_edit_text(
+        query, text,
         parse_mode="Markdown",
         reply_markup=result_keyboard(player_id, cat_key),
     )
@@ -447,7 +536,24 @@ async def tier_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
-# Fallback: unexpected text outside search state
+# Utility: edit text even if the current message is a photo (edit caption)
+# ---------------------------------------------------------------------------
+
+async def _safe_edit_text(query, text: str, **kwargs):
+    """Edit a message as text whether it's currently a text or photo message."""
+    try:
+        await query.edit_message_text(text, **kwargs)
+    except TelegramError:
+        # Message was a photo — edit the caption instead, then swap to text
+        try:
+            await query.edit_message_caption(caption=text, **kwargs)
+        except TelegramError:
+            # Last resort: send a new message
+            await query.message.reply_text(text, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Fallback
 # ---------------------------------------------------------------------------
 
 async def unexpected_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -479,6 +585,7 @@ def main():
             MAIN: [
                 CallbackQueryHandler(nav_callback,      pattern=r"^nav:"),
                 CallbackQueryHandler(player_callback,   pattern=r"^player:"),
+                CallbackQueryHandler(confirm_callback,  pattern=r"^confirm:"),
                 CallbackQueryHandler(category_callback, pattern=r"^cat:"),
                 CallbackQueryHandler(upgrade_callback,  pattern=r"^upg:"),
                 CallbackQueryHandler(tier_callback,     pattern=r"^tier:"),
