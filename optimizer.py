@@ -55,6 +55,7 @@ PLAYSTYLES = {
         "stats": {"finishing": 1.0, "offensiveAwareness": 0.9, "ballControl": 0.6,
                    "kickingPower": 0.6, "speed": 0.5, "acceleration": 0.5,
                    "physicalContact": 0.4},
+    },
 }
 
 # All trainable stats (non-GK)
@@ -158,5 +159,5 @@ def format_build_result(result: Dict[str, Any]) -> str:
         if final > base:
             lines.append(f"  {sn}: {base} -> {final} (+{pts})")
 
-    return "
-".join(lines)
+    return "\n".join(lines)
+

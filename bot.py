@@ -4,6 +4,9 @@ import logging
 import sys
 import os
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -14,7 +17,7 @@ from scraper import search_players, fetch_player_detail, fetch_player_index
 from optimizer import optimize_build, PLAYSTYLES, format_build_result
 
 
-loging.basicConfig(
+logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
@@ -34,10 +37,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "⚽ *eFootball Build Bot*\n\n"
         "Commands:\n"
-        "/search <name> - Search for a player\n"
-        "/build <name> <playstyle> - Get build recommendation\n"
+        "/search NAME - Search for a player\n"
+        "/build NAME PLAYSTYLE - Get build recommendation\n"
         "/playstyles - List available playstyles\n"
-        "/player <player_id> - Get player details\n\n"
+        "/player PLAYER\\_ID - Get player details\n\n"
         "Examples:\n"
         "`/search Messi`\n"
         "`/build Messi dribble`\n"
@@ -207,3 +210,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
