@@ -5,11 +5,9 @@ embedded in RSC (React Server Components) payload chunks:
 
     self.__next_f.push([1,"<json-escaped RSC text>"])
 
-Each chunk's string is JSON-encoded, so \" → " after json.loads().
+Each chunk's string is JSON-encoded, so \" -> " after json.loads().
 The unescaped text contains lines like:
     f:["$","$L3f",null,{"baseStats":{...},"name":"...","position":"..."}]
-
-We collect all chunks, unescape them, concatenate, then extract fields.
 """
 import re
 import json
@@ -32,7 +30,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# Matches: self.__next_f.push([1,"<escaped-content>"])
 _RSC_PUSH_RE = re.compile(
     r'self\.__next_f\.push\(\[1,"((?:[^"\\]|\\.)*)"\]\)',
     re.DOTALL,
@@ -48,8 +45,6 @@ def _collect_rsc_text(html: str) -> str:
     parts = []
     for m in _RSC_PUSH_RE.finditer(html):
         try:
-            # The captured group is the JSON-encoded string value; wrapping
-            # it in quotes lets json.loads unescape it correctly.
             parts.append(json.loads(f'"{m.group(1)}"'))
         except (json.JSONDecodeError, ValueError):
             continue
@@ -57,17 +52,13 @@ def _collect_rsc_text(html: str) -> str:
 
 
 def _extract_json_object(text: str, key: str) -> Optional[dict]:
-    """Extract the first JSON object for *key* using brace-depth counting.
-
-    Handles arbitrarily nested objects — unlike a simple [^}]+ regex which
-    stops at the first closing brace it encounters.
-    """
+    """Extract a JSON object for *key* using brace-depth counting."""
     pattern = rf'"{re.escape(key)}"\s*:\s*\{{'
     m = re.search(pattern, text)
     if not m:
         return None
 
-    start = m.end() - 1   # index of the opening '{'
+    start = m.end() - 1
     depth = 0
     in_string = False
     escape_next = False
@@ -128,7 +119,7 @@ def fetch_player_index() -> list:
 
 
 def search_players(query: str, index_data: Optional[list] = None) -> list:
-    """Search players by name. Returns list of {id, name, overall}."""
+    """Search players by name. Returns list of {id, name, overall, ...}."""
     if index_data is None:
         index_data = fetch_player_index()
     if not index_data:
@@ -139,7 +130,21 @@ def search_players(query: str, index_data: Optional[list] = None) -> list:
     for p in index_data:
         name = p.get("e", "")
         if q in name.lower():
-            results.append({"id": p["i"], "name": name, "overall": p.get("o", 0)})
+            entry: dict = {
+                "id": p["i"],
+                "name": name,
+                "overall": p.get("o", 0),
+            }
+            # Pass through any extra fields the index exposes
+            for src_key, dst_key in (
+                ("p", "position"),
+                ("t", "cardType"),
+                ("c", "club"),
+                ("n", "nation"),
+            ):
+                if p.get(src_key):
+                    entry[dst_key] = p[src_key]
+            results.append(entry)
 
     return sorted(results, key=lambda x: -x["overall"])[:10]
 
@@ -155,8 +160,6 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
         return None
 
     html = r.text
-
-    # Collect and unescape all RSC push chunks
     rsc = _collect_rsc_text(html)
 
     if not rsc:
@@ -167,7 +170,6 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
         logger.warning("No baseStats found in RSC payload for player %s", player_id)
         return None
 
-    # --- baseStats (the only required field) ---
     base_stats = _extract_json_object(rsc, "baseStats")
     if not base_stats:
         logger.warning("Could not parse baseStats for player %s", player_id)
@@ -178,35 +180,57 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
         "baseStats": base_stats,
     }
 
-    # --- Name: prefer explicit field, fall back to slug in <title> ---
+    # --- Name ---
     name = _extract_str(rsc, "name")
     if not name:
         title_m = re.search(r"<title[^>]*>([^<]+)</title>", html)
         if title_m:
-            # e.g. "K. Kvaratskhelia — 85 OVR | eFHUB"
-            name = title_m.group(1).split("—")[0].strip()
+            name = title_m.group(1).split("\u2014")[0].split("--")[0].strip()
     player_data["name"] = name or f"Player {player_id}"
 
-    # --- Other scalar fields ---
-    pos = _extract_str(rsc, "position")
-    if pos:
-        player_data["position"] = pos
+    # --- Scalar fields ---
+    for field, keys in (
+        ("position",    ("position",)),
+        ("playingStyle",("playingStyle",)),
+        ("levelCap",    ("initialLevelCap", "levelCap")),
+        ("overall",     ("overall", "overallRating")),
+        ("boostId",     ("initialBoostLeftId",)),
+        ("cardType",    ("cardType", "type")),
+    ):
+        if field in ("levelCap", "overall", "boostId"):
+            val = _extract_int(rsc, *keys)
+        else:
+            val = None
+            for k in keys:
+                val = _extract_str(rsc, k)
+                if val:
+                    break
+        if val is not None:
+            player_data[field] = val
 
-    ps = _extract_str(rsc, "playingStyle")
-    if ps:
-        player_data["playingStyle"] = ps
+    # --- Card image URL ---
+    # 1. Try known RSC field names
+    img_url = None
+    for img_key in ("imageUrl", "image", "cardImage", "imgUrl", "playerImage", "img", "photo"):
+        raw = _extract_str(rsc, img_key)
+        if raw:
+            img_url = raw if raw.startswith("http") else BASE_URL + raw
+            break
 
-    lc = _extract_int(rsc, "initialLevelCap", "levelCap")
-    if lc is not None:
-        player_data["levelCap"] = lc
+    # 2. Fall back to og:image meta tag (always present on efhub player pages)
+    if not img_url:
+        og_m = re.search(
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            html,
+        ) or re.search(
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+            html,
+        )
+        if og_m:
+            img_url = og_m.group(1)
 
-    ovr = _extract_int(rsc, "overall", "overallRating")
-    if ovr is not None:
-        player_data["overall"] = ovr
-
-    boost = _extract_int(rsc, "initialBoostLeftId")
-    if boost is not None:
-        player_data["boostId"] = boost
+    if img_url:
+        player_data["imageUrl"] = img_url
 
     return player_data
 
@@ -235,8 +259,10 @@ if __name__ == "__main__":
         if detail:
             print(f"Name:      {detail.get('name')}")
             print(f"Position:  {detail.get('position')}")
+            print(f"CardType:  {detail.get('cardType')}")
             print(f"Level cap: {detail.get('levelCap')}")
             print(f"Overall:   {detail.get('overall')}")
+            print(f"ImageURL:  {detail.get('imageUrl')}")
             print(f"baseStats: {dict(list(detail.get('baseStats', {}).items())[:5])}")
         else:
             print("Failed to fetch detail")
