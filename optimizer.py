@@ -672,7 +672,11 @@ def format_dna_result(result: Dict[str, Any]) -> str:
             gcat_label = TRAINING_CATEGORIES[gcat_id]["label"]
             # Calculate PP cost for these clicks
             pp_cost = sum(get_click_cost(i) for i in range(n_clicks))
-            lines.append(f"  `{gcat_label:<44}` ×{n_clicks}  ({pp_cost} PP)")
+            # Two-line format: label on its own line, counts indented below.
+            # The old `{gcat_label:<44}` monospace block was wider than a
+            # Telegram mobile screen (~32 chars), causing ugly mid-line wraps.
+            lines.append(f"  {gcat_label}")
+            lines.append(f"    ×{n_clicks}  ({pp_cost} PP)")
         lines.append("")
 
     # --- Primary stat mutations ---
