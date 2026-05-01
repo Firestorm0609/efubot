@@ -200,20 +200,31 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
     player_data["name"] = name or f"Player {player_id}"
 
     # --- Scalar fields ---
+    # String fields MUST be searched within `chunk` (the RSC line that holds
+    # baseStats) rather than the full RSC text.  The Next.js component tree
+    # that precedes the player object contains UI label strings like
+    # "position":"Position" and "cardType":"Card Type" which are picked up
+    # first by a full-text scan — the same trap that caused the name bug.
+    # Integer fields don't have this problem (no integer "Position" labels).
     for field, keys in (
-        ("position",    ("position",)),
-        ("playingStyle",("playingStyle",)),
-        ("levelCap",    ("initialLevelCap", "levelCap")),
-        ("overall",     ("overall", "overallRating")),
-        ("boostId",     ("initialBoostLeftId",)),
-        ("cardType",    ("cardType", "type")),
+        ("position",     ("position",)),
+        ("playingStyle", ("playingStyle",)),
+        ("levelCap",     ("initialLevelCap", "levelCap")),
+        ("overall",      ("overall", "overallRating")),
+        ("boostId",      ("initialBoostLeftId",)),
+        ("cardType",     ("cardType", "type")),
     ):
         if field in ("levelCap", "overall", "boostId"):
             val = _extract_int(rsc, *keys)
         else:
             val = None
-            for k in keys:
-                val = _extract_str(rsc, k)
+            # Prefer the targeted chunk; fall back to full RSC scan
+            search_targets = [chunk, rsc] if chunk else [rsc]
+            for src in search_targets:
+                for k in keys:
+                    val = _extract_str(src, k)
+                    if val:
+                        break
                 if val:
                     break
         if val is not None:
