@@ -127,16 +127,20 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def search_results_keyboard(results: list) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(
-            _card_label(r),
-            callback_data=f"player:{r['id']}",
-        )]
-        for r in results[:8]
-    ]
-    rows.append([InlineKeyboardButton("⬅️  Back", callback_data="nav:main")])
-    return InlineKeyboardMarkup(rows)
+def carousel_keyboard(index: int, total: int, player_id: int) -> InlineKeyboardMarkup:
+    """Prev / Next nav + pick + back — shown under the card photo."""
+    nav_row = []
+    if index > 0:
+        nav_row.append(InlineKeyboardButton("◀️  Prev", callback_data=f"carousel:{index - 1}"))
+    nav_row.append(InlineKeyboardButton(f"{index + 1} / {total}", callback_data="noop"))
+    if index < total - 1:
+        nav_row.append(InlineKeyboardButton("Next  ▶️", callback_data=f"carousel:{index + 1}"))
+    return InlineKeyboardMarkup([
+        nav_row,
+        [InlineKeyboardButton("✅  Engineer this card", callback_data=f"confirm:{player_id}")],
+        [InlineKeyboardButton("🔍  Search again", callback_data="nav:search"),
+         InlineKeyboardButton("🏠  Menu",         callback_data="nav:main")],
+    ])
 
 
 def confirm_keyboard(player_id: int) -> InlineKeyboardMarkup:
@@ -304,13 +308,109 @@ async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN
 
     context.user_data["last_results"] = results
+    context.user_data["carousel_index"] = 0
 
+    # Show first card immediately as a photo carousel — no list at all
+    await _send_carousel_card(context, update.effective_chat.id, 0)
+    return MAIN
+
+
+# ---------------------------------------------------------------------------
+# Carousel helpers
+# ---------------------------------------------------------------------------
+
+async def _send_carousel_card(context: ContextTypes.DEFAULT_TYPE, chat_id: int, index: int) -> None:
+    """Fetch player detail and send it as a new photo carousel message."""
+    results = context.user_data.get("last_results", [])
+    if not results or index < 0 or index >= len(results):
+        return
+
+    r = results[index]
+    player_id = r["id"]
+    total = len(results)
+
+    try:
+        detail = fetch_player_detail(player_id)
+    except Exception as exc:
+        logger.error("Carousel fetch error for player %s: %s", player_id, exc)
+        detail = None
+
+    if detail:
+        context.user_data["player_detail"] = detail
+
+    caption = _card_caption(detail) if detail else f"*{r['name']}*  ·  {r['overall']} OVR"
+    img_url = detail.get("imageUrl") if detail else None
+    keyboard = carousel_keyboard(index, total, player_id)
+
+    if img_url:
+        try:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=img_url,
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+            return
+        except TelegramError as e:
+            logger.warning("send_photo failed for player %s: %s", player_id, e)
+
+    # Fallback: text message
     await context.bot.send_message(
-        update.effective_chat.id,
-        f"*Results for '{query_text}':*\n\nSelect a player to engineer:",
+        chat_id=chat_id,
+        text=caption,
         parse_mode="Markdown",
-        reply_markup=search_results_keyboard(results),
+        reply_markup=keyboard,
     )
+
+
+async def carousel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle ◀️ Prev / Next ▶️ navigation — swaps the photo in-place."""
+    query = update.callback_query
+    await query.answer()
+
+    index = int(query.data.split(":")[1])
+    results = context.user_data.get("last_results", [])
+    if not results or index < 0 or index >= len(results):
+        return MAIN
+
+    r = results[index]
+    player_id = r["id"]
+    total = len(results)
+    context.user_data["carousel_index"] = index
+
+    try:
+        detail = fetch_player_detail(player_id)
+    except Exception as exc:
+        logger.error("Carousel nav fetch error for player %s: %s", player_id, exc)
+        detail = None
+
+    if detail:
+        context.user_data["player_detail"] = detail
+
+    caption = _card_caption(detail) if detail else f"*{r['name']}*  ·  {r['overall']} OVR"
+    img_url = detail.get("imageUrl") if detail else None
+    keyboard = carousel_keyboard(index, total, player_id)
+
+    if img_url:
+        try:
+            await query.edit_message_media(
+                media=InputMediaPhoto(media=img_url, caption=caption, parse_mode="Markdown"),
+                reply_markup=keyboard,
+            )
+            return MAIN
+        except TelegramError as e:
+            logger.warning("edit_message_media failed: %s", e)
+
+    # Fallback: just update the caption / text
+    try:
+        await query.edit_message_caption(caption=caption, parse_mode="Markdown", reply_markup=keyboard)
+    except TelegramError:
+        try:
+            await query.edit_message_text(caption, parse_mode="Markdown", reply_markup=keyboard)
+        except TelegramError:
+            await query.message.reply_text(caption, parse_mode="Markdown", reply_markup=keyboard)
+
     return MAIN
 
 
@@ -584,6 +684,8 @@ def main():
         states={
             MAIN: [
                 CallbackQueryHandler(nav_callback,      pattern=r"^nav:"),
+                CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern=r"^noop$"),
+                CallbackQueryHandler(carousel_callback, pattern=r"^carousel:"),
                 CallbackQueryHandler(player_callback,   pattern=r"^player:"),
                 CallbackQueryHandler(confirm_callback,  pattern=r"^confirm:"),
                 CallbackQueryHandler(category_callback, pattern=r"^cat:"),
