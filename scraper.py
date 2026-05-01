@@ -58,8 +58,70 @@ def _extract_json_value(html: str, key: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def _extract_json_object(html: str, key: str) -> Optional[dict]:
+    """Extract a JSON object value for a given key using bracket counting.
+
+    Unlike a simple [^}]+ regex this handles arbitrarily nested objects,
+    so it works even when baseStats (or any other field) contains nested
+    dicts like {"speed": {"value": 90, "rank": 1}, ...}.
+    """
+    pattern = rf'"{re.escape(key)}"\s*:\s*\{{'
+    m = re.search(pattern, html)
+    if not m:
+        return None
+
+    start = m.end() - 1  # position of the opening '{'
+    depth = 0
+    i = start
+    while i < len(html):
+        ch = html[i]
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                raw = html[start:i + 1]
+                try:
+                    return json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    logger.debug("JSON parse error for key '%s': %s", key, exc)
+                    return None
+        i += 1
+    return None
+
+
+def _parse_next_data(html: str) -> Optional[dict]:
+    """Extract and parse the __NEXT_DATA__ JSON blob embedded by Next.js."""
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return None
+
+
+def _player_data_from_next(next_data: dict) -> Optional[dict]:
+    """Walk the __NEXT_DATA__ tree to find the player props object."""
+    try:
+        # Common Next.js shape: pageProps -> player / playerData / data
+        page_props = next_data["props"]["pageProps"]
+        for key in ("player", "playerData", "data"):
+            if key in page_props and isinstance(page_props[key], dict):
+                return page_props[key]
+        # Some versions nest under dehydratedState
+        dehydrated = page_props.get("dehydratedState", {})
+        for query in dehydrated.get("queries", []):
+            data = query.get("state", {}).get("data")
+            if isinstance(data, dict) and "baseStats" in data:
+                return data
+    except (KeyError, TypeError):
+        pass
+    return None
+
+
 def fetch_player_detail(player_id: int) -> Optional[dict]:
-    """Fetch player detail by parsing the Next.js RSC payload in the page."""
+    """Fetch player detail, preferring __NEXT_DATA__ over raw-HTML regex."""
     url = f"{BASE_URL}/en/players/{player_id}"
     try:
         r = requests.get(url, timeout=15, headers=HEADERS)
@@ -71,18 +133,47 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
     html = r.text
     player_data: dict = {}
 
-    # --- baseStats: grab the full {...} block after the key ---
-    bs_match = re.search(r'"baseStats"\s*:\s*(\{[^}]+\})', html)
-    if not bs_match:
+    # ------------------------------------------------------------------ #
+    # Strategy 1: parse the structured __NEXT_DATA__ blob (most reliable) #
+    # ------------------------------------------------------------------ #
+    next_data = _parse_next_data(html)
+    raw: Optional[dict] = None
+    if next_data:
+        raw = _player_data_from_next(next_data)
+
+    if raw and "baseStats" in raw:
+        player_data["baseStats"] = raw["baseStats"]
+        player_data["name"] = raw.get("name", raw.get("slug", f"Player {player_id}"))
+        if isinstance(player_data["name"], str) and "-" in player_data["name"] and " " not in player_data["name"]:
+            player_data["name"] = player_data["name"].replace("-", " ").title()
+        for key in ("position", "playingStyle"):
+            if key in raw:
+                player_data[key] = raw[key]
+        for cap_key in ("initialLevelCap", "levelCap"):
+            if cap_key in raw:
+                player_data["levelCap"] = int(raw[cap_key])
+                break
+        for ovr_key in ("overall", "overallRating"):
+            if ovr_key in raw:
+                player_data["overall"] = int(raw[ovr_key])
+                break
+        if "initialBoostLeftId" in raw:
+            player_data["boostId"] = int(raw["initialBoostLeftId"])
+        player_data["playerId"] = str(player_id)
+        return player_data
+
+    # ------------------------------------------------------------------ #
+    # Strategy 2: bracket-counting regex fallback (handles nested objects) #
+    # ------------------------------------------------------------------ #
+    logger.debug("__NEXT_DATA__ parse failed for player %s — falling back to regex", player_id)
+
+    base_stats = _extract_json_object(html, "baseStats")
+    if not base_stats:
         logger.warning("No baseStats found for player %s", player_id)
         return None
-    try:
-        player_data["baseStats"] = json.loads(bs_match.group(1))
-    except json.JSONDecodeError as exc:
-        logger.error("JSON parse error for baseStats (player %s): %s", player_id, exc)
-        return None
+    player_data["baseStats"] = base_stats
 
-    # --- Player name: prefer explicit name field, fall back to slug ---
+    # --- Player name ---
     name_match = re.search(r'"name"\s*:\s*"([^"]+)"', html)
     if name_match:
         player_data["name"] = name_match.group(1)
@@ -98,7 +189,7 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
     if pos_match:
         player_data["position"] = pos_match.group(1)
 
-    # --- Level cap: check both field names ---
+    # --- Level cap ---
     for cap_key in ("initialLevelCap", "levelCap"):
         lc_match = re.search(rf'"{cap_key}"\s*:\s*(\d+)', html)
         if lc_match:
