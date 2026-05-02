@@ -550,7 +550,10 @@ def optimize_dna(
     Budget = level_cap * tier_multiplier  (Progression Points).
     DNA tiers are custom build intensities — not an in-game mechanic.
     """
-    base_stats   = player_data.get("baseStats", {})
+    # Use maxStats (stats at level cap) as the training baseline if available.
+    # baseStats reflects the card before leveling — training happens at max
+    # level, so maxStats is the correct starting point for all calculations.
+    base_stats   = player_data.get("maxStats") or player_data.get("baseStats", {})
     level_cap    = player_data.get("levelCap", 34)
 
     tier    = DNA_TIERS.get(tier_key, DNA_TIERS["elite"])
@@ -644,6 +647,18 @@ def optimize_dna(
         "player_name":      player_data.get("name", "Unknown"),
         "position":         player_data.get("position", ""),
         "overall":          player_data.get("overall", 0),
+        # New fields from enriched scraper
+        "team":                 player_data.get("team", ""),
+        "age":                  player_data.get("age"),
+        "height":               player_data.get("height"),
+        "weight":               player_data.get("weight"),
+        "preferred_foot":       player_data.get("preferredFoot", ""),
+        "weak_foot_accuracy":   player_data.get("weakFootAccuracy"),
+        "weak_foot_usage":      player_data.get("weakFootUsage"),
+        "skills":               player_data.get("skills", []),
+        "com_skills":           player_data.get("comSkills", []),
+        "additional_positions": player_data.get("additionalPositions", []),
+        "base_stats_raw":       player_data.get("baseStats", {}),   # original card stats
     }
 
 
@@ -664,6 +679,46 @@ def format_dna_result(result: Dict[str, Any]) -> str:
     if pos: identity += f" · {pos}"
     if ovr: identity += f" · {ovr} OVR"
     lines.append(identity)
+
+    # Additional positions (e.g. "Also: RMF ★★  AMF ★★★")
+    add_pos = result.get("additional_positions", [])
+    if add_pos:
+        fam_stars = {1: "★", 2: "★★", 3: "★★★"}
+        pos_parts = [f"{p['position']} {fam_stars.get(p.get('familiarity', 1), '')}"
+                     for p in add_pos if isinstance(p, dict)]
+        if pos_parts:
+            lines.append(f"   Also: {' · '.join(pos_parts)}")
+
+    # Team
+    team = result.get("team", "")
+    if team:
+        lines.append(f"🏟 {team}")
+
+    # Physical / foot info
+    foot_line_parts = []
+    pfoot = result.get("preferred_foot", "")
+    if pfoot:
+        foot_line_parts.append(f"{pfoot} foot")
+    wfa = result.get("weak_foot_accuracy")
+    wfu = result.get("weak_foot_usage")
+    if wfa is not None:
+        stars = "★" * wfa + "☆" * (4 - wfa)
+        foot_line_parts.append(f"Weak foot acc {stars}")
+    if wfu is not None:
+        stars = "★" * wfu + "☆" * (4 - wfu)
+        foot_line_parts.append(f"usage {stars}")
+    if foot_line_parts:
+        lines.append("👟 " + "  ·  ".join(foot_line_parts))
+
+    # Player skills
+    skills = result.get("skills", [])
+    if skills:
+        lines.append(f"⚙️ Skills: {', '.join(skills)}")
+    com_skills = result.get("com_skills", [])
+    if com_skills:
+        lines.append(f"🎮 COM: {', '.join(com_skills)}")
+
+    lines.append("")
     lines.append(f"{result['cat_label']}  ·  {t_ico} *{result['tier_label']} DNA*")
     lines.append(f"Budget: *{result['budget']} PP* (Level {result['level_cap']})")
     lines.append("")
