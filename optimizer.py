@@ -625,18 +625,7 @@ def optimize_dna(
     stat_gains: Dict[str, int] = {s: 0 for s in TRAINABLE_STATS + GK_STATS}
     budget_remaining = total_budget
 
-    def do_click(gcat_id: str) -> None:
-        """Spend one click on a category."""
-        cost = get_click_cost(clicks[gcat_id])
-        if cost > budget_remaining:
-            return
-        clicks[gcat_id] += 1
-        budget_remaining -= cost
-        for s in TRAINING_CATEGORIES[gcat_id]["stats"]:
-            if base_stats.get(s, 0) + stat_gains.get(s, 0) < 99:
-                stat_gains[s] += 1
-
-    # ------------------------------------------------------------------
+# ------------------------------------------------------------------
     # Phase 1: Hammer the upgrade's relevant categories (greedy)
     # ------------------------------------------------------------------
     while True:
@@ -660,7 +649,13 @@ def optimize_dna(
 
         if best_gcat is None:
             break
-        do_click(best_gcat)
+        # Inline do_click logic
+        cost = get_click_cost(clicks[best_gcat])
+        clicks[best_gcat] += 1
+        budget_remaining -= cost
+        for s in TRAINING_CATEGORIES[best_gcat]["stats"]:
+            if base_stats.get(s, 0) + stat_gains.get(s, 0) < 99:
+                stat_gains[s] += 1
 
     # ------------------------------------------------------------------
     # Phase 2: Spend remaining PP on position-relevant stats
@@ -688,7 +683,13 @@ def optimize_dna(
 
         if best_gcat is None:
             break
-        do_click(best_gcat)
+        # Inline do_click logic
+        cost = get_click_cost(clicks[best_gcat])
+        clicks[best_gcat] += 1
+        budget_remaining -= cost
+        for s in TRAINING_CATEGORIES[best_gcat]["stats"]:
+            if base_stats.get(s, 0) + stat_gains.get(s, 0) < 99:
+                stat_gains[s] += 1
 
     # ------------------------------------------------------------------
     # Build results
