@@ -8,22 +8,37 @@ embedded in RSC (React Server Components) payload chunks:
 Each chunk's string is JSON-encoded, so \" -> " after json.loads().
 The unescaped text contains lines like:
     f:["$","$L3f",null,{"baseStats":{...},"name":"...","position":"..."}]
+
+The RSC payload contains TWO useful sources for player data:
+
+  1. Top-level sibling object (alongside baseStats):
+       { baseStats, position, additionalPositions, height, weakFootAccuracy,
+         playingStyle, initialBoostLeftId, initialLevelCap, children }
+
+  2. Nested player object (inside children[][][player]):
+       { id, name, nameJa, team, league, nationality, overallRating, age,
+         height, weight, preferredFoot, weakFootUsage, weakFootAccuracy,
+         form, condition, injuryResistance, skills, comSkills, imageUrl,
+         position, playingStyle, additionalPositions (as RSC ref — skip),
+         stats (as RSC ref — skip) }
+
+  3. maxStats object (elsewhere in RSC):
+       { offensiveAwareness, ballControl, ... } — stats at level cap
 """
 import re
 import json
 import logging
 import requests
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://efhub.com"
+BASE_URL  = "https://efhub.com"
 INDEX_URL = f"{BASE_URL}/search/player-index.json"
 BOOSTS_URL = f"{BASE_URL}/data/boosts.json"
 
-# Values that the Next.js component tree injects as UI-label props before the
-# real player JSON object.  Any extracted string matching one of these must be
-# discarded — it is a placeholder, not a real field value.
+# Next.js injects UI label strings before real player data in the RSC tree.
+# Any extracted string that matches one of these is a placeholder, not a value.
 _UI_PLACEHOLDER_VALUES: frozenset = frozenset({
     "Card Type", "Position", "Playing Style", "Name",
     "Next.MetadataOutlet", "Player Name", "Club", "Nation",
@@ -89,11 +104,49 @@ def _extract_json_object(text: str, key: str) -> Optional[dict]:
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                raw = text[start : i + 1]
+                raw = text[start: i + 1]
                 try:
                     return json.loads(raw)
                 except json.JSONDecodeError as exc:
                     logger.debug("JSON parse error extracting '%s': %s", key, exc)
+                    return None
+    return None
+
+
+def _extract_json_array(text: str, key: str) -> Optional[list]:
+    """Extract a JSON array for *key* using bracket-depth counting."""
+    pattern = rf'"{re.escape(key)}"\s*:\s*\['
+    m = re.search(pattern, text)
+    if not m:
+        return None
+
+    start = m.end() - 1
+    depth = 0
+    in_string = False
+    escape_next = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                raw = text[start: i + 1]
+                try:
+                    return json.loads(raw)
+                except json.JSONDecodeError:
                     return None
     return None
 
@@ -108,6 +161,13 @@ def _extract_int(text: str, *keys: str) -> Optional[int]:
         m = re.search(rf'"{re.escape(key)}"\s*:\s*(\d+)', text)
         if m:
             return int(m.group(1))
+    return None
+
+
+def _safe_str(val: Any) -> Optional[str]:
+    """Return val if it's a non-empty string not in the placeholder set."""
+    if isinstance(val, str) and val and val not in _UI_PLACEHOLDER_VALUES:
+        return val
     return None
 
 
@@ -139,11 +199,10 @@ def search_players(query: str, index_data: Optional[list] = None) -> list:
         name = p.get("e", "")
         if q in name.lower():
             entry: dict = {
-                "id": p["i"],
-                "name": name,
+                "id":      p["i"],
+                "name":    name,
                 "overall": p.get("o", 0),
             }
-            # Pass through any extra fields the index exposes
             for src_key, dst_key in (
                 ("p", "position"),
                 ("t", "cardType"),
@@ -158,7 +217,15 @@ def search_players(query: str, index_data: Optional[list] = None) -> list:
 
 
 def fetch_player_detail(player_id: int) -> Optional[dict]:
-    """Fetch player detail from the efhub.com RSC payload."""
+    """Fetch full player detail from the efhub.com RSC payload.
+
+    Reads every available field:
+      baseStats, maxStats, name, nameJa, position, additionalPositions,
+      playingStyle, overallRating, levelCap, age, height, weight,
+      preferredFoot, weakFootAccuracy, weakFootUsage, form, condition,
+      injuryResistance, skills, comSkills, team, league, nationality,
+      boostId, imageUrl, slug
+    """
     url = f"{BASE_URL}/en/players/{player_id}"
     try:
         r = requests.get(url, timeout=15, headers=HEADERS)
@@ -168,101 +235,162 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
         return None
 
     html = r.text
-    rsc = _collect_rsc_text(html)
+    rsc  = _collect_rsc_text(html)
 
     if not rsc:
         logger.warning("No RSC chunks found for player %s", player_id)
         return None
-
     if "baseStats" not in rsc:
         logger.warning("No baseStats found in RSC payload for player %s", player_id)
         return None
 
-    base_stats = _extract_json_object(rsc, "baseStats")
+    # ------------------------------------------------------------------
+    # Locate the RSC line that contains baseStats — everything we need
+    # is on this single line (or searchable within it).
+    # ------------------------------------------------------------------
+    bs_pos     = rsc.find('"baseStats"')
+    line_start = rsc.rfind("\n", 0, bs_pos) + 1
+    line_end   = rsc.find("\n", bs_pos)
+    chunk      = rsc[line_start: line_end if line_end != -1 else len(rsc)]
+
+    # ------------------------------------------------------------------
+    # SOURCE 1 — baseStats object
+    # ------------------------------------------------------------------
+    base_stats = _extract_json_object(chunk, "baseStats")
     if not base_stats:
         logger.warning("Could not parse baseStats for player %s", player_id)
         return None
 
     player_data: dict = {
-        "playerId": str(player_id),
+        "playerId":  str(player_id),
         "baseStats": base_stats,
     }
 
-    # --- Name ---
-    # Search for "name" only within the RSC line that contains "baseStats"
-    # so we don't accidentally match Next.js component names like
-    # "Next.MetadataOutlet" that appear earlier in the RSC payload.
-    name = None
-    bs_pos = rsc.find('"baseStats"')
-    if bs_pos >= 0:
-        line_start = rsc.rfind("\n", 0, bs_pos) + 1
-        line_end = rsc.find("\n", bs_pos)
-        chunk = rsc[line_start : line_end if line_end != -1 else len(rsc)]
-        name = _extract_str(chunk, "name")
-    if not name:
-        name = _extract_str(rsc, "name")  # last-resort: full scan
-    if not name:
-        title_m = re.search(r"<title[^>]*>([^<]+)</title>", html)
-        if title_m:
-            name = title_m.group(1).split("\u2014")[0].split("--")[0].strip()
-    player_data["name"] = name or f"Player {player_id}"
+    # ------------------------------------------------------------------
+    # SOURCE 2 — maxStats object (stats at level cap)
+    # Prefer chunk, fall back to full RSC (it may live in a different chunk)
+    # ------------------------------------------------------------------
+    max_stats = (
+        _extract_json_object(chunk, "maxStats")
+        or _extract_json_object(rsc,   "maxStats")
+        or _extract_json_object(chunk, "maxLevelStats")
+        or _extract_json_object(rsc,   "maxLevelStats")
+    )
+    if max_stats:
+        player_data["maxStats"] = max_stats
 
-    # --- Scalar fields ---
-    # String fields MUST be searched within `chunk` (the RSC line that holds
-    # baseStats) rather than the full RSC text.  The Next.js component tree
-    # that precedes the player object contains UI label strings like
-    # "position":"Position" and "cardType":"Card Type" which are picked up
-    # first by a full-text scan — the same trap that caused the name bug.
-    # Integer fields don't have this problem (no integer "Position" labels).
-    for field, keys in (
-        ("position",     ("position",)),
-        ("playingStyle", ("playingStyle",)),
-        ("levelCap",     ("initialLevelCap", "levelCap")),
-        ("overall",      ("overall", "overallRating")),
-        ("boostId",      ("initialBoostLeftId",)),
-        ("cardType",     ("cardType", "type")),
-    ):
-        if field in ("levelCap", "overall", "boostId"):
-            val = _extract_int(rsc, *keys)
-        else:
-            val = None
-            # Prefer the targeted chunk; fall back to full RSC scan.
-            # Discard any value that matches a known UI placeholder label.
-            search_targets = [chunk, rsc] if chunk else [rsc]
-            for src in search_targets:
-                for k in keys:
-                    candidate = _extract_str(src, k)
-                    if candidate and candidate not in _UI_PLACEHOLDER_VALUES:
-                        val = candidate
-                        break
-                if val:
+    # ------------------------------------------------------------------
+    # SOURCE 3 — nested player object (inside children[][][player])
+    # This is the richest source: name, skills, team, league, etc.
+    # Note: some fields in here are RSC references ("$f:props:...") —
+    # json.loads still parses them as strings; we just skip them below.
+    # ------------------------------------------------------------------
+    player_obj = _extract_json_object(chunk, "player")
+
+    if player_obj:
+        # String fields
+        for src, dst in (
+            ("name",          "name"),
+            ("nameJa",        "nameJa"),
+            ("team",          "team"),
+            ("league",        "league"),
+            ("nationality",   "nationality"),
+            ("nationalityCode","nationalityCode"),
+            ("playingStyle",  "playingStyle"),
+            ("position",      "position"),
+            ("preferredFoot", "preferredFoot"),
+            ("slug",          "slug"),
+            ("imageUrl",      "imageUrl"),
+        ):
+            v = _safe_str(player_obj.get(src))
+            if v:
+                player_data[dst] = v
+
+        # Integer fields
+        for src, dst in (
+            ("overallRating",   "overall"),
+            ("age",             "age"),
+            ("height",          "height"),
+            ("weight",          "weight"),
+            ("weakFootAccuracy","weakFootAccuracy"),
+            ("weakFootUsage",   "weakFootUsage"),
+            ("form",            "form"),
+            ("condition",       "condition"),
+            ("injuryResistance","injuryResistance"),
+        ):
+            v = player_obj.get(src)
+            if isinstance(v, int):
+                player_data[dst] = v
+
+        # List fields — only keep if actually a list (not an RSC "$" reference)
+        for src, dst in (
+            ("skills",    "skills"),
+            ("comSkills", "comSkills"),
+        ):
+            v = player_obj.get(src)
+            if isinstance(v, list):
+                player_data[dst] = v
+
+    # ------------------------------------------------------------------
+    # SOURCE 4 — top-level sibling keys (alongside baseStats in same obj)
+    # Fill in anything player_obj didn't provide.
+    # ------------------------------------------------------------------
+
+    # additionalPositions lives here as the real array (player_obj has a ref)
+    if "additionalPositions" not in player_data:
+        arr = _extract_json_array(chunk, "additionalPositions")
+        if arr:
+            player_data["additionalPositions"] = arr
+
+    # Scalar sibling fields
+    _sibling_int = [
+        ("levelCap",        ("initialLevelCap", "levelCap")),
+        ("boostId",         ("initialBoostLeftId",)),
+        ("overall",         ("overallRating", "overall")),
+        ("height",          ("height",)),
+        ("weakFootAccuracy",("weakFootAccuracy",)),
+    ]
+    for dst, src_keys in _sibling_int:
+        if dst not in player_data:
+            v = _extract_int(chunk, *src_keys)
+            if v is not None:
+                player_data[dst] = v
+
+    _sibling_str = [
+        ("position",    ("position",)),
+        ("playingStyle",("playingStyle",)),
+    ]
+    for dst, src_keys in _sibling_str:
+        if dst not in player_data:
+            for k in src_keys:
+                v = _extract_str(chunk, k)
+                if _safe_str(v):
+                    player_data[dst] = v
                     break
-        if val is not None:
-            player_data[field] = val
 
-    # --- Card image URL ---
-    # 1. Try known RSC field names
-    img_url = None
-    for img_key in ("imageUrl", "image", "cardImage", "imgUrl", "playerImage", "img", "photo"):
-        raw = _extract_str(rsc, img_key)
-        if raw:
-            img_url = raw if raw.startswith("http") else BASE_URL + raw
-            break
+    # ------------------------------------------------------------------
+    # SOURCE 5 — name fallback chain
+    # ------------------------------------------------------------------
+    if not player_data.get("name"):
+        v = _extract_str(chunk, "name") or _extract_str(rsc, "name")
+        if not v:
+            title_m = re.search(r"<title[^>]*>([^<]+)</title>", html)
+            if title_m:
+                v = title_m.group(1).split("\u2014")[0].split("--")[0].strip()
+        player_data["name"] = v or f"Player {player_id}"
 
-    # 2. Fall back to og:image meta tag (always present on efhub player pages)
-    if not img_url:
-        og_m = re.search(
+    # ------------------------------------------------------------------
+    # SOURCE 6 — imageUrl fallback to og:image meta tag
+    # ------------------------------------------------------------------
+    if not player_data.get("imageUrl"):
+        for pat in (
             r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-            html,
-        ) or re.search(
             r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
-            html,
-        )
-        if og_m:
-            img_url = og_m.group(1)
-
-    if img_url:
-        player_data["imageUrl"] = img_url
+        ):
+            og_m = re.search(pat, html)
+            if og_m:
+                player_data["imageUrl"] = og_m.group(1)
+                break
 
     return player_data
 
@@ -286,16 +414,17 @@ if __name__ == "__main__":
     messi = [p for p in idx if "messi" in p.get("e", "").lower()]
     if messi:
         pid = messi[0]["i"]
-        print(f"Testing detail fetch for {messi[0]['e']} (id={pid})")
+        print(f"\nTesting detail fetch for {messi[0]['e']} (id={pid})")
         detail = fetch_player_detail(pid)
         if detail:
-            print(f"Name:      {detail.get('name')}")
-            print(f"Position:  {detail.get('position')}")
-            print(f"CardType:  {detail.get('cardType')}")
-            print(f"Level cap: {detail.get('levelCap')}")
-            print(f"Overall:   {detail.get('overall')}")
-            print(f"ImageURL:  {detail.get('imageUrl')}")
-            print(f"baseStats: {dict(list(detail.get('baseStats', {}).items())[:5])}")
+            skip = {"baseStats", "maxStats", "playerModel"}
+            for k, v in detail.items():
+                if k not in skip:
+                    print(f"  {k:<22} {v}")
+            print(f"\n  baseStats  ({len(detail.get('baseStats', {}))} stats):")
+            for sk, sv in sorted(detail.get("baseStats", {}).items()):
+                max_v = detail.get("maxStats", {}).get(sk, "?")
+                print(f"    {sk:<26} base={sv:<4} max={max_v}")
         else:
             print("Failed to fetch detail")
     else:
