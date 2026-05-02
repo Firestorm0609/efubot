@@ -21,6 +21,14 @@ BASE_URL = "https://efhub.com"
 INDEX_URL = f"{BASE_URL}/search/player-index.json"
 BOOSTS_URL = f"{BASE_URL}/data/boosts.json"
 
+# Values that the Next.js component tree injects as UI-label props before the
+# real player JSON object.  Any extracted string matching one of these must be
+# discarded — it is a placeholder, not a real field value.
+_UI_PLACEHOLDER_VALUES: frozenset = frozenset({
+    "Card Type", "Position", "Playing Style", "Name",
+    "Next.MetadataOutlet", "Player Name", "Club", "Nation",
+})
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -218,12 +226,14 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
             val = _extract_int(rsc, *keys)
         else:
             val = None
-            # Prefer the targeted chunk; fall back to full RSC scan
+            # Prefer the targeted chunk; fall back to full RSC scan.
+            # Discard any value that matches a known UI placeholder label.
             search_targets = [chunk, rsc] if chunk else [rsc]
             for src in search_targets:
                 for k in keys:
-                    val = _extract_str(src, k)
-                    if val:
+                    candidate = _extract_str(src, k)
+                    if candidate and candidate not in _UI_PLACEHOLDER_VALUES:
+                        val = candidate
                         break
                 if val:
                     break
