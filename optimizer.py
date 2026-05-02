@@ -411,18 +411,6 @@ DNA_CATEGORIES: Dict[str, Dict] = {
 }
 
 # ---------------------------------------------------------------------------
-# DNA Evolution Tiers — the progression system
-# ---------------------------------------------------------------------------
-
-DNA_TIERS: Dict[str, Dict] = {
-    "rookie":      {"label": "Rookie",        "icon": "🥉", "multiplier": 0.7},
-    "elite":       {"label": "Elite",         "icon": "🥈", "multiplier": 1.0},
-    "world_class": {"label": "World Class",   "icon": "🥇", "multiplier": 1.4},
-    "legendary":   {"label": "Legendary",     "icon": "💎", "multiplier": 1.8},
-    "goat":        {"label": "GOAT Mutation", "icon": "👑", "multiplier": 2.5},
-}
-
-# ---------------------------------------------------------------------------
 # Stat metadata
 # ---------------------------------------------------------------------------
 
@@ -535,7 +523,6 @@ def optimize_dna(
     player_data: Dict[str, Any],
     cat_key: str,
     upg_key: str,
-    tier_key: str,
 ) -> Dict[str, Any]:
     """
     Category-click DNA optimizer — mirrors the real eFootball training system.
@@ -547,8 +534,7 @@ def optimize_dna(
     The greedy algorithm picks whichever relevant category gives the best
     weighted-benefit / PP-cost ratio on each step.
 
-    Budget = level_cap * tier_multiplier  (Progression Points).
-    DNA tiers are custom build intensities — not an in-game mechanic.
+    Budget = level_cap * 2.5  (GOAT Mutation multiplier).
     """
     # Use maxStats (stats at level cap) as the training baseline if available.
     # baseStats reflects the card before leveling — training happens at max
@@ -556,12 +542,11 @@ def optimize_dna(
     base_stats   = player_data.get("maxStats") or player_data.get("baseStats", {})
     level_cap    = player_data.get("levelCap", 34)
 
-    tier    = DNA_TIERS.get(tier_key, DNA_TIERS["elite"])
     cat     = DNA_CATEGORIES.get(cat_key, {})
     upgrade = cat.get("upgrades", {}).get(upg_key, {})
 
-    # PP budget: level_cap × tier multiplier
-    total_budget = max(1, int(level_cap * tier["multiplier"]))
+    # PP budget: level_cap × 2.5 (GOAT Mutation)
+    total_budget = max(1, int(level_cap * 2.5))
     weights      = upgrade.get("stats", {})   # stat_key -> priority weight
 
     # Identify which game categories contain at least one weighted stat
@@ -628,12 +613,9 @@ def optimize_dna(
     return {
         "cat_key":          cat_key,
         "upg_key":          upg_key,
-        "tier_key":         tier_key,
         "cat_label":        cat.get("label", ""),
         "upg_label":        upgrade.get("label", ""),
         "upg_desc":         upgrade.get("desc", ""),
-        "tier_label":       tier["label"],
-        "tier_icon":        tier["icon"],
         "mutation_note":    upgrade.get("mutation_note"),
         "allocations":      allocations,
         "bonus_gains":      bonus_gains,
@@ -667,7 +649,6 @@ def format_dna_result(result: Dict[str, Any]) -> str:
     name  = result.get("player_name", "")
     pos   = result.get("position", "")
     ovr   = result.get("overall", 0)
-    t_ico = result.get("tier_icon", "")
 
     lines = [
         f"🧬 *{result['upg_label']}*",
@@ -719,7 +700,7 @@ def format_dna_result(result: Dict[str, Any]) -> str:
         lines.append(f"🎮 COM: {', '.join(com_skills)}")
 
     lines.append("")
-    lines.append(f"{result['cat_label']}  ·  {t_ico} *{result['tier_label']} DNA*")
+    lines.append(f"{result['cat_label']}  ·  👑 *GOAT Mutation DNA*")
     lines.append(f"Budget: *{result['budget']} PP* (Level {result['level_cap']})")
     lines.append("")
 

@@ -57,8 +57,7 @@ def get_index() -> list:
 
 MAIN_MENU_TEXT = (
     "🧬 *eFootball DNA Lab*\n\n"
-    "Engineer any player's DNA — choose upgrades, mutate playstyles "
-    "and apply evolution tiers.\n\n"
+    "Engineer any player's DNA — choose upgrades and mutate playstyles.\n\n"
     "_This isn't traits. This is archetype engineering._"
 )
 
@@ -497,7 +496,7 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
-# cat / upg / tier callbacks (unchanged logic, updated back buttons)
+# cat / upg callbacks (unchanged logic, updated back buttons)
 # ---------------------------------------------------------------------------
 
 async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -527,7 +526,7 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Run the optimizer immediately with GOAT tier — no tier selection step."""
+    """Run the optimizer immediately with GOAT Mutation budget."""
     query = update.callback_query
     await query.answer("Engineering DNA…")
 
@@ -563,7 +562,7 @@ async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN
 
     try:
-        result = optimize_dna(player_data, cat_key, upg_key, "goat")
+        result = optimize_dna(player_data, cat_key, upg_key)
         text   = format_dna_result(result)
     except Exception as exc:
         logger.error("Optimizer error for player %s: %s", player_id, exc)
@@ -575,6 +574,14 @@ async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]),
         )
         return MAIN
+
+    await context.bot.send_message(
+        update.effective_chat.id,
+        text,
+        parse_mode="Markdown",
+        reply_markup=result_keyboard(player_id, cat_key),
+    )
+    return MAIN
 
 
 async def _safe_edit_text(query, text: str, **kwargs):
