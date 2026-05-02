@@ -267,20 +267,7 @@ def fetch_player_detail(player_id: int) -> Optional[dict]:
     }
 
     # ------------------------------------------------------------------
-    # SOURCE 2 — maxStats object (stats at level cap)
-    # Prefer chunk, fall back to full RSC (it may live in a different chunk)
-    # ------------------------------------------------------------------
-    max_stats = (
-        _extract_json_object(chunk, "maxStats")
-        or _extract_json_object(rsc,   "maxStats")
-        or _extract_json_object(chunk, "maxLevelStats")
-        or _extract_json_object(rsc,   "maxLevelStats")
-    )
-    if max_stats:
-        player_data["maxStats"] = max_stats
-
-    # ------------------------------------------------------------------
-    # SOURCE 3 — nested player object (inside children[][][player])
+    # SOURCE 2 — player object (inside children[][][player])
     # This is the richest source: name, skills, team, league, etc.
     # Note: some fields in here are RSC references ("$f:props:...") —
     # json.loads still parses them as strings; we just skip them below.

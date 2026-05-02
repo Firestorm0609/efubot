@@ -534,19 +534,24 @@ def optimize_dna(
     The greedy algorithm picks whichever relevant category gives the best
     weighted-benefit / PP-cost ratio on each step.
 
-    Budget = level_cap * 2.5  (GOAT Mutation multiplier).
+    Training baseline is baseStats (which is already the stats at max level
+    on efhub.com — what the page shows under "Level Cap").
+
+    Budget = (level_cap - 1) * 2, matching the actual eFootball PP table
+    (L31→60, L32→62, L33→64, ...).
     """
-    # Use maxStats (stats at level cap) as the training baseline if available.
-    # baseStats reflects the card before leveling — training happens at max
-    # level, so maxStats is the correct starting point for all calculations.
-    base_stats   = player_data.get("maxStats") or player_data.get("baseStats", {})
+    # baseStats from efhub.com is already the stats at max level
+    # (what the page shows under "Level Cap"). This is our training baseline.
+    base_stats   = player_data.get("baseStats", {})
     level_cap    = player_data.get("levelCap", 34)
 
     cat     = DNA_CATEGORIES.get(cat_key, {})
     upgrade = cat.get("upgrades", {}).get(upg_key, {})
 
-    # PP budget: level_cap × 2.5 (GOAT Mutation)
-    total_budget = max(1, int(level_cap * 2.5))
+    # PP budget: (level_cap - 1) × 2, based on actual eFootball data:
+    # L31→60 PP, L32→62 PP, L33→64 PP, ...
+    # This matches the game's progression point formula.
+    total_budget = max(1, (level_cap - 1) * 2)
     weights      = upgrade.get("stats", {})   # stat_key -> priority weight
 
     # Identify which game categories contain at least one weighted stat
@@ -701,7 +706,7 @@ def format_dna_result(result: Dict[str, Any]) -> str:
 
     lines.append("")
     lines.append(f"{result['cat_label']}  ·  👑 *GOAT Mutation DNA*")
-    lines.append(f"Budget: *{result['budget']} PP* (Level {result['level_cap']})")
+    lines.append(f"Budget: *{result['budget']} PP* (Level {result['level_cap']}, {(result['level_cap']-1)*2} PP)")
     lines.append("")
 
     # --- Training click plan ---
