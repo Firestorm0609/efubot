@@ -519,68 +519,134 @@ def get_click_cost(clicks_already: int) -> int:
     return (clicks_already // 4) + 1
 
 
+# Position-specific stat weights for Phase 2 (balanced build)
+# These define which stats matter for each position when spending leftover PP.
+POSITION_WEIGHTS: Dict[str, Dict[str, float]] = {
+    "GK":   {s: 1.0 for s in GK_STATS},
+    "CB":   {"defensiveAwareness": 1.0, "ballWinning": 0.9, "defensiveEngagement": 0.9,
+              "physicalContact": 0.8, "speed": 0.7, "acceleration": 0.6, "jump": 0.6,
+              "heading": 0.5, "balance": 0.4, "stamina": 0.3},
+    "LB":   {"defensiveAwareness": 1.0, "ballWinning": 0.9, "speed": 0.9,
+              "acceleration": 0.8, "defensiveEngagement": 0.8, "stamina": 0.7,
+              "physicalContact": 0.6, "balance": 0.5, "ballControl": 0.4},
+    "RB":   {"defensiveAwareness": 1.0, "ballWinning": 0.9, "speed": 0.9,
+              "acceleration": 0.8, "defensiveEngagement": 0.8, "stamina": 0.7,
+              "physicalContact": 0.6, "balance": 0.5, "ballControl": 0.4},
+    "LWB":  {"defensiveAwareness": 1.0, "speed": 0.9, "stamina": 0.9,
+              "acceleration": 0.8, "ballWinning": 0.8, "defensiveEngagement": 0.7,
+              "ballControl": 0.5, "dribbling": 0.4},
+    "RWB":  {"defensiveAwareness": 1.0, "speed": 0.9, "stamina": 0.9,
+              "acceleration": 0.8, "ballWinning": 0.8, "defensiveEngagement": 0.7,
+              "ballControl": 0.5, "dribbling": 0.4},
+    "DMF":  {"defensiveAwareness": 1.0, "ballWinning": 0.9, "defensiveEngagement": 0.9,
+              "lowPass": 0.8, "loftedPass": 0.7, "physicalContact": 0.7,
+              "ballControl": 0.6, "stamina": 0.6, "acceleration": 0.5},
+    "CMF":  {"stamina": 1.0, "ballControl": 0.9, "lowPass": 0.9,
+              "loftedPass": 0.8, "defensiveAwareness": 0.7, "offensiveAwareness": 0.7,
+              "dribbling": 0.6, "balance": 0.5, "acceleration": 0.5},
+    "AMF":  {"offensiveAwareness": 1.0, "ballControl": 0.9, "dribbling": 0.9,
+              "tightPossession": 0.8, "loftedPass": 0.7, "lowPass": 0.7,
+              "finishing": 0.6, "acceleration": 0.6, "balance": 0.5},
+    "LMF":  {"speed": 1.0, "stamina": 0.9, "offensiveAwareness": 0.8,
+              "dribbling": 0.8, "ballControl": 0.7, "crossing": 0.7,
+              "loftedPass": 0.6, "acceleration": 0.6, "balance": 0.5},
+    "RMF":  {"speed": 1.0, "stamina": 0.9, "offensiveAwareness": 0.8,
+              "dribbling": 0.8, "ballControl": 0.7, "crossing": 0.7,
+              "loftedPass": 0.6, "acceleration": 0.6, "balance": 0.5},
+    "LWF":  {"dribbling": 1.0, "speed": 0.9, "acceleration": 0.9,
+              "offensiveAwareness": 0.8, "finishing": 0.7, "ballControl": 0.7,
+              "tightPossession": 0.6, "balance": 0.5, "stamina": 0.4},
+    "RWF":  {"dribbling": 1.0, "speed": 0.9, "acceleration": 0.9,
+              "offensiveAwareness": 0.8, "finishing": 0.7, "ballControl": 0.7,
+              "tightPossession": 0.6, "balance": 0.5, "stamina": 0.4},
+    "SS":   {"offensiveAwareness": 1.0, "finishing": 0.9, "ballControl": 0.8,
+              "dribbling": 0.8, "tightPossession": 0.7, "speed": 0.7,
+              "acceleration": 0.6, "balance": 0.5, "physicalContact": 0.4},
+    "CF":   {"finishing": 1.0, "offensiveAwareness": 0.9, "speed": 0.8,
+              "acceleration": 0.7, "ballControl": 0.7, "dribbling": 0.7,
+              "physicalContact": 0.6, "stamina": 0.5, "balance": 0.5},
+}
+
+
 def optimize_dna(
     player_data: Dict[str, Any],
     cat_key: str,
     upg_key: str,
 ) -> Dict[str, Any]:
     """
-    Category-click DNA optimizer — mirrors the real eFootball training system.
+    Two-phase category-click optimizer mirroring eFootball's training system.
 
-    Each training "click" on a game category raises every stat in that group
-    by +1 simultaneously.  Cost per click escalates every 4 clicks within
-    the same category: clicks 1-4 = 1 PP, 5-8 = 2 PP, 9-12 = 3 PP, ...
+    Phase 1: Max out the selected upgrade's stats (focused build).
+    Phase 2: Spend remaining PP on the player's position-relevant stats.
 
-    The greedy algorithm picks whichever relevant category gives the best
-    weighted-benefit / PP-cost ratio on each step.
+    Each click raises ALL stats in a game category by +1.
+    Cost per click escalates: clicks 1-4 = 1 PP, 5-8 = 2 PP, 9-12 = 3 PP, ...
 
-    Training baseline is baseStats (which is already the stats at max level
-    on efhub.com — what the page shows under "Level Cap").
-
-    Budget = (level_cap - 1) * 2, matching the actual eFootball PP table
-    (L31→60, L32→62, L33→64, ...).
+    Training baseline: baseStats (stats at max level).
+    Budget = (level_cap - 1) * 2, matching real eFootball PP tables.
     """
-    # baseStats from efhub.com is already the stats at max level
-    # (what the page shows under "Level Cap"). This is our training baseline.
-    base_stats   = player_data.get("baseStats", {})
-    level_cap    = player_data.get("levelCap", 34)
+    base_stats = player_data.get("baseStats", {})
+    level_cap  = player_data.get("levelCap", 34)
+    position   = player_data.get("position", "")
 
     cat     = DNA_CATEGORIES.get(cat_key, {})
     upgrade = cat.get("upgrades", {}).get(upg_key, {})
 
-    # PP budget: (level_cap - 1) × 2, based on actual eFootball data:
-    # L31→60 PP, L32→62 PP, L33→64 PP, ...
-    # This matches the game's progression point formula.
     total_budget = max(1, (level_cap - 1) * 2)
-    weights      = upgrade.get("stats", {})   # stat_key -> priority weight
+    weights      = upgrade.get("stats", {})
 
-    # Identify which game categories contain at least one weighted stat
+    # ------------------------------------------------------------------
+    # Position weights for Phase 2
+    # ------------------------------------------------------------------
+    pos_weights = POSITION_WEIGHTS.get(position, {})
+    if not pos_weights:
+        if position in ("CF", "SS", "LWF", "RWF"):
+            pos_weights = POSITION_WEIGHTS["CF"]
+        elif position in ("CB", "LB", "RB"):
+            pos_weights = POSITION_WEIGHTS["CB"]
+        elif position in ("DMF", "CMF", "AMF"):
+            pos_weights = POSITION_WEIGHTS["CMF"]
+        else:
+            pos_weights = {s: 1.0 for s in TRAINABLE_STATS}
+
+    # ------------------------------------------------------------------
+    # Phase 1: Identify categories relevant to the selected upgrade
+    # ------------------------------------------------------------------
     relevant: Dict[str, Dict[str, float]] = {}
     for gcat_id, gcat in TRAINING_CATEGORIES.items():
         w_in_cat = {s: weights[s] for s in gcat["stats"] if weights.get(s, 0) > 0}
         if w_in_cat:
             relevant[gcat_id] = w_in_cat
 
-    # State
-    clicks: Dict[str, int] = {gcat: 0 for gcat in relevant}
-
-    # Track gains for every stat touched (weighted + bonus side-effects)
-    touched_stats: set = set()
-    for gcat_id in relevant:
-        touched_stats.update(TRAINING_CATEGORIES[gcat_id]["stats"])
-    stat_gains: Dict[str, int] = {s: 0 for s in touched_stats}
-
+    # ------------------------------------------------------------------
+    # Shared state
+    # ------------------------------------------------------------------
+    clicks: Dict[str, int] = {gcat: 0 for gcat in TRAINING_CATEGORIES}
+    stat_gains: Dict[str, int] = {s: 0 for s in TRAINABLE_STATS + GK_STATS}
     budget_remaining = total_budget
 
-    while budget_remaining > 0:
-        best_gcat:  Optional[str] = None
-        best_score: float         = -1.0
+    def do_click(gcat_id: str) -> None:
+        """Spend one click on a category."""
+        cost = get_click_cost(clicks[gcat_id])
+        if cost > budget_remaining:
+            return
+        clicks[gcat_id] += 1
+        budget_remaining -= cost
+        for s in TRAINING_CATEGORIES[gcat_id]["stats"]:
+            if base_stats.get(s, 0) + stat_gains.get(s, 0) < 99:
+                stat_gains[s] += 1
+
+    # ------------------------------------------------------------------
+    # Phase 1: Hammer the upgrade's relevant categories (greedy)
+    # ------------------------------------------------------------------
+    while True:
+        best_gcat: Optional[str] = None
+        best_score: float     = -1.0
 
         for gcat_id, w_stats in relevant.items():
             cost = get_click_cost(clicks[gcat_id])
             if cost > budget_remaining:
                 continue
-            # Only useful if at least one weighted stat can still improve
             benefit = sum(
                 w for s, w in w_stats.items()
                 if base_stats.get(s, 0) + stat_gains.get(s, 0) < 99
@@ -594,20 +660,55 @@ def optimize_dna(
 
         if best_gcat is None:
             break
+        do_click(best_gcat)
 
-        cost = get_click_cost(clicks[best_gcat])
-        clicks[best_gcat] += 1
-        budget_remaining  -= cost
+    # ------------------------------------------------------------------
+    # Phase 2: Spend remaining PP on position-relevant stats
+    # ------------------------------------------------------------------
+    while budget_remaining > 0:
+        best_gcat: Optional[str] = None
+        best_score: float     = -1.0
 
-        # +1 to every stat in the clicked game category (capped at 99)
-        for s in TRAINING_CATEGORIES[best_gcat]["stats"]:
-            if s in stat_gains and base_stats.get(s, 0) + stat_gains[s] < 99:
-                stat_gains[s] += 1
+        for gcat_id, gcat in TRAINING_CATEGORIES.items():
+            cost = get_click_cost(clicks[gcat_id])
+            if cost > budget_remaining:
+                continue
+            benefit = sum(
+                pos_weights.get(s, 0)
+                for s in gcat["stats"]
+                if base_stats.get(s, 0) + stat_gains.get(s, 0) < 99
+                and pos_weights.get(s, 0) > 0
+            )
+            if benefit <= 0:
+                continue
+            score = benefit / cost
+            if score > best_score:
+                best_score = score
+                best_gcat  = gcat_id
 
-    # Split gains into target (weighted) vs bonus (side-effect) stats
-    allocations = {s: stat_gains[s] for s in weights      if stat_gains.get(s, 0) > 0}
-    bonus_gains = {s: stat_gains[s] for s in touched_stats
-                   if s not in weights and stat_gains.get(s, 0) > 0}
+        if best_gcat is None:
+            break
+        do_click(best_gcat)
+
+    # ------------------------------------------------------------------
+    # Build results
+    # ------------------------------------------------------------------
+    # Phase 1 stats (the upgrade's weighted stats)
+    allocations = {s: stat_gains[s] for s in weights if stat_gains.get(s, 0) > 0}
+
+    # Phase 2 stats (position-relevant stats that aren't in Phase 1)
+    phase2_gains = {
+        s: stat_gains[s]
+        for s in stat_gains
+        if s not in weights and stat_gains.get(s, 0) > 0 and pos_weights.get(s, 0) > 0
+    }
+
+    # Bonus side-effect stats (touched by Phase 1 clicks but not weighted)
+    bonus_gains = {
+        s: stat_gains[s]
+        for s in stat_gains
+        if s not in weights and s not in pos_weights and stat_gains.get(s, 0) > 0
+    }
 
     final_stats: Dict[str, int] = {}
     for s in TRAINABLE_STATS + GK_STATS:
@@ -623,6 +724,7 @@ def optimize_dna(
         "upg_desc":         upgrade.get("desc", ""),
         "mutation_note":    upgrade.get("mutation_note"),
         "allocations":      allocations,
+        "phase2_gains":     phase2_gains,
         "bonus_gains":      bonus_gains,
         "base_stats":       base_stats,
         "final_stats":      final_stats,
@@ -634,18 +736,17 @@ def optimize_dna(
         "player_name":      player_data.get("name", "Unknown"),
         "position":         player_data.get("position", ""),
         "overall":          player_data.get("overall", 0),
-        # New fields from enriched scraper
-        "team":                 player_data.get("team", ""),
-        "age":                  player_data.get("age"),
-        "height":               player_data.get("height"),
-        "weight":               player_data.get("weight"),
-        "preferred_foot":       player_data.get("preferredFoot", ""),
+        "team":             player_data.get("team", ""),
+        "age":              player_data.get("age"),
+        "height":           player_data.get("height"),
+        "weight":           player_data.get("weight"),
+        "preferred_foot":   player_data.get("preferredFoot", ""),
         "weak_foot_accuracy":   player_data.get("weakFootAccuracy"),
         "weak_foot_usage":      player_data.get("weakFootUsage"),
-        "skills":               player_data.get("skills", []),
-        "com_skills":           player_data.get("comSkills", []),
+        "skills":           player_data.get("skills", []),
+        "com_skills":       player_data.get("comSkills", []),
         "additional_positions": player_data.get("additionalPositions", []),
-        "base_stats_raw":       player_data.get("baseStats", {}),   # original card stats
+        "base_stats_raw":   player_data.get("baseStats", {}),
     }
 
 
@@ -714,17 +815,13 @@ def format_dna_result(result: Dict[str, Any]) -> str:
         lines.append("*TRAINING PLAN:*")
         for gcat_id, n_clicks in result["clicks"].items():
             gcat_label = TRAINING_CATEGORIES[gcat_id]["label"]
-            # Calculate PP cost for these clicks
             pp_cost = sum(get_click_cost(i) for i in range(n_clicks))
-            # Two-line format: label on its own line, counts indented below.
-            # The old `{gcat_label:<44}` monospace block was wider than a
-            # Telegram mobile screen (~32 chars), causing ugly mid-line wraps.
             lines.append(f"  {gcat_label}")
             lines.append(f"    ×{n_clicks}  ({pp_cost} PP)")
         lines.append("")
 
-    # --- Primary stat mutations ---
-    lines.append("*STAT MUTATIONS:*")
+    # --- Phase 1: upgrade stats ---
+    lines.append("*PHASE 1 — UPGRADE STATS:*")
     if result["allocations"]:
         sorted_allocs = sorted(result["allocations"].items(), key=lambda x: -x[1])
         for stat_key, pts in sorted_allocs:
@@ -735,6 +832,18 @@ def format_dna_result(result: Dict[str, Any]) -> str:
             lines.append(f"  `{label:<20}` {base} → *{final}* `+{pts}` {bar}")
     else:
         lines.append("  _All target stats already at cap (99)_")
+
+    # --- Phase 2: position-relevant stats ---
+    if result.get("phase2_gains"):
+        lines.append("")
+        lines.append("*PHASE 2 — POSITION STATS:*")
+        sorted_p2 = sorted(result["phase2_gains"].items(), key=lambda x: -x[1])
+        for stat_key, pts in sorted_p2:
+            label = STAT_LABELS.get(stat_key, stat_key)
+            base  = result["base_stats"].get(stat_key, 0)
+            final = result["final_stats"].get(stat_key, 0)
+            bar   = "█" * min(pts, 10)
+            lines.append(f"  `{label:<20}` {base} → *{final}* `+{pts}` {bar}")
 
     # --- Bonus side-effect stats ---
     if result.get("bonus_gains"):
