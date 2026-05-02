@@ -18,7 +18,7 @@ from telegram.error import TelegramError
 
 from scraper import search_players, fetch_player_detail, fetch_player_index
 from optimizer import (
-    DNA_CATEGORIES, DNA_TIERS,
+    DNA_CATEGORIES,
     optimize_dna, format_dna_result,
 )
 
@@ -184,19 +184,6 @@ def upgrade_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
     )])
     return InlineKeyboardMarkup(rows)
 
-
-def tier_keyboard(player_id: int, cat_key: str, upg_key: str) -> InlineKeyboardMarkup:
-    rows = []
-    for tier_key, tier in DNA_TIERS.items():
-        rows.append([InlineKeyboardButton(
-            f"{tier['icon']}  {tier['label']}",
-            callback_data=f"tier:{player_id}:{cat_key}:{upg_key}:{tier_key}",
-        )])
-    rows.append([InlineKeyboardButton(
-        "⬅️  Back to upgrades",
-        callback_data=f"cat:{player_id}:{cat_key}",
-    )])
-    return InlineKeyboardMarkup(rows)
 
 
 def result_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
@@ -445,7 +432,7 @@ async def player_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN
 
-    # Cache for later use in tier_callback so we don't fetch twice
+    # Cache detail so upgrade_callback can reuse it without a second fetch
     context.user_data["player_detail"] = detail
 
     caption = _card_caption(detail)
@@ -540,8 +527,9 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Run the optimizer immediately with GOAT tier — no tier selection step."""
     query = update.callback_query
-    await query.answer()
+    await query.answer("Engineering DNA…")
 
     parts     = query.data.split(":")
     player_id = int(parts[1])
@@ -554,47 +542,8 @@ async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Unknown upgrade.", show_alert=True)
         return MAIN
 
-    detail = context.user_data.get("player_detail", {})
-    player_name = detail.get("name") or f"Player {player_id}"
-
-    await _safe_edit_text(
-        query,
-        f"*{upgrade['label']}*\n"
-        f"_{upgrade['desc']}_\n\n"
-        f"👤 *{player_name}*\n\n"
-        "Choose your *DNA Evolution Tier:*",
-        parse_mode="Markdown",
-        reply_markup=tier_keyboard(player_id, cat_key, upg_key),
-    )
-    return MAIN
-
-
-async def tier_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("Engineering DNA…")
-
-    parts     = query.data.split(":")
-    player_id = int(parts[1])
-    cat_key   = parts[2]
-    upg_key   = parts[3]
-    tier_key  = parts[4]
-
-    if cat_key not in DNA_CATEGORIES:
-        await _safe_edit_text(query, "❌ Unknown category.")
-        return MAIN
-
-    cat = DNA_CATEGORIES[cat_key]
-    if upg_key not in cat.get("upgrades", {}):
-        await _safe_edit_text(query, "❌ Unknown upgrade.")
-        return MAIN
-
-    if tier_key not in DNA_TIERS:
-        await _safe_edit_text(query, "❌ Unknown tier.")
-        return MAIN
-
     await _safe_edit_text(query, "⚙️ Engineering your DNA build…")
 
-    # Use cached detail if available; fetch only as fallback
     player_data = context.user_data.get("player_detail")
     if not player_data or "baseStats" not in player_data:
         try:
@@ -614,7 +563,7 @@ async def tier_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN
 
     try:
-        result = optimize_dna(player_data, cat_key, upg_key, tier_key)
+        result = optimize_dna(player_data, cat_key, upg_key, "goat")
         text   = format_dna_result(result)
     except Exception as exc:
         logger.error("Optimizer error for player %s: %s", player_id, exc)
@@ -627,17 +576,6 @@ async def tier_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN
 
-    await _safe_edit_text(
-        query, text,
-        parse_mode="Markdown",
-        reply_markup=result_keyboard(player_id, cat_key),
-    )
-    return MAIN
-
-
-# ---------------------------------------------------------------------------
-# Utility: edit text even if the current message is a photo (edit caption)
-# ---------------------------------------------------------------------------
 
 async def _safe_edit_text(query, text: str, **kwargs):
     """Edit a message as text whether it's currently a text or photo message."""
@@ -690,7 +628,7 @@ def main():
                 CallbackQueryHandler(confirm_callback,  pattern=r"^confirm:"),
                 CallbackQueryHandler(category_callback, pattern=r"^cat:"),
                 CallbackQueryHandler(upgrade_callback,  pattern=r"^upg:"),
-                CallbackQueryHandler(tier_callback,     pattern=r"^tier:"),
+
                 MessageHandler(filters.TEXT & ~filters.COMMAND, unexpected_message),
             ],
             SEARCHING: [
