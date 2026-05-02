@@ -448,7 +448,7 @@ STAT_LABELS: Dict[str, str] = {
     "curl":                "Curl",
     "heading":             "Heading",
     "defensiveAwareness":  "Def. Awareness",
-    "ballWinning":         "Ball Winning",
+    "ballWinning":         "Tackling",      # game renamed "Ball Winning" → "Tackling"
     "defensiveEngagement": "Def. Engagement",
     "aggression":          "Aggression",
     "kickingPower":        "Kicking Power",
@@ -460,7 +460,7 @@ STAT_LABELS: Dict[str, str] = {
     "stamina":             "Stamina",
     "gkAwareness":         "GK Awareness",
     "gkCatching":          "GK Catching",
-    "gkClearing":          "GK Clearing",
+    "gkClearing":          "GK Deflecting", # game renamed "GK Clearing" → "GK Deflecting"
     "gkReflexes":          "GK Reflexes",
     "gkReach":             "GK Reach",
 }
@@ -496,16 +496,19 @@ TRAINING_CATEGORIES: Dict[str, Dict] = {
         "stats": ["heading", "jump", "physicalContact"],
     },
     "cat_defend": {
+        # In-game UI renamed "Ball Winning" to "Tackling" but efhub.com data
+        # still stores this stat under the key "ballWinning". Keep stat key as-is.
         "label": "Defensive Awareness, Tackling, Aggression, Defensive Engagement",
-        "stats": ["defensiveAwareness", "tackling", "aggression", "defensiveEngagement"],
+        "stats": ["defensiveAwareness", "ballWinning", "aggression", "defensiveEngagement"],
     },
     "cat_gk1": {
         "label": "GK Awareness, Jumping",
         "stats": ["gkAwareness", "jump"],
     },
     "cat_gk2": {
+        # In-game UI renamed to "GK Deflecting" but efhub key is still "gkClearing"
         "label": "GK Deflecting, GK Reach",
-        "stats": ["gkDeflecting", "gkReach"],
+        "stats": ["gkClearing", "gkReach"],
     },
     "cat_gk3": {
         "label": "GK Catching, GK Reflexes",
