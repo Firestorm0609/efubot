@@ -56,25 +56,40 @@ def get_index() -> list:
 # ---------------------------------------------------------------------------
 
 MAIN_MENU_TEXT = (
-    "🧬 *eFootball DNA Lab*\n\n"
-    "Engineer any player's DNA — choose upgrades and mutate playstyles.\n\n"
-    "_This isn't traits. This is archetype engineering._"
+    "🧬 *eFootball DNA Lab*\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Forge any player into a weapon.\n"
+    "Pick upgrades · Mutate playstyles\n"
+    "Unlock *GOAT‑tier* DNA potential.\n\n"
+    "_Not traits. Not stats. Pure DNA._"
 )
 
 GUIDE_TEXT = (
-    "🧬 *DNA Engineering Guide*\n\n"
-    "*9 Categories to engineer your player:*\n\n"
-    "⚡ *Athletic Engine* — physical & movement tuning\n"
-    "🎮 *Ball Mastery* — control & dribbling behavior\n"
-    "🎯 *Finishing Lab* — granular shooting upgrades\n"
-    "🧠 *Football IQ* — AI behavior & decision-making\n"
-    "🚀 *Playstyle Mutation* — full role transformations\n"
-    "🔥 *Pressing & Intensity* — aggression engine\n"
-    "🪽 *Wide Threat* — dynamic winger identities\n"
-    "🛡️ *Defensive Core* — modern defender builds\n"
-    "⭐ *Signature Builds* — pre-engineered legends\n\n"
-    "*5 DNA Evolution Tiers:*\n"
-    "🥉 Rookie  ·  🥈 Elite  ·  🥇 World Class  ·  💎 Legendary  ·  👑 GOAT Mutation"
+    "📡 *DNA Engineering Manual*\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "*9 Engineering Modules*\n\n"
+    "⚡ *Athletic Engine*\n"
+    "   Physical movement & speed tuning\n\n"
+    "🎮 *Ball Mastery*\n"
+    "   Control, dribbling & possession\n\n"
+    "🎯 *Finishing Lab*\n"
+    "   Granular, customisable shooting\n\n"
+    "🧠 *Football IQ*\n"
+    "   AI behavior & decision-making\n\n"
+    "🚀 *Playstyle Mutation*\n"
+    "   Full role transformations\n\n"
+    "🔥 *Pressing & Intensity*\n"
+    "   Aggression & pressing engine\n\n"
+    "🪽 *Wide Threat*\n"
+    "   Dynamic winger identities\n\n"
+    "🛡️ *Defensive Core*\n"
+    "   Modern defender builds\n\n"
+    "⭐ *Signature Builds*\n"
+    "   Pre‑engineered legend archetypes\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    "*5 Evolution Tiers*\n\n"
+    "🥉 Rookie  ·  🥈 Elite  ·  🥇 World Class\n"
+    "💎 Legendary  ·  👑 *GOAT Mutation*"
 )
 
 
@@ -104,14 +119,22 @@ def _card_caption(detail: dict) -> str:
     card_type = detail.get("cardType", "")
     level_cap = detail.get("levelCap", "")
 
-    lines = [f"*{name}*  ·  {overall} OVR"]
+    lines = [f"*{name}*", "━━━━━━━━━━━━━━━━━━━━━━"]
+
+    meta = f"{overall} OVR"
     if card_type:
-        lines.append(f"🃏 {card_type}")
-    if position or style:
-        lines.append(f"📍 {position}  ·  {style}" if position and style else f"📍 {position or style}")
+        meta += f"  ·  🃏 {card_type}"
+    if position:
+        meta += f"  ·  📍 {position}"
+    lines.append(meta)
+
+    if style:
+        lines.append(f"_{style}_")
     if level_cap:
-        lines.append(f"⬆️ Level cap: {level_cap}")
-    lines.append("\nIs this the card you want to engineer?")
+        lines.append(f"⬆️  Level cap: {level_cap}")
+
+    lines.append("")
+    lines.append("◈  Is this the card to engineer?")
     return "\n".join(lines)
 
 
@@ -121,8 +144,8 @@ def _card_caption(detail: dict) -> str:
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔍  Search Player", callback_data="nav:search")],
-        [InlineKeyboardButton("📖  DNA Guide",     callback_data="nav:guide")],
+        [InlineKeyboardButton("🔬  Search Player", callback_data="nav:search")],
+        [InlineKeyboardButton("📡  DNA Manual",    callback_data="nav:guide")],
     ])
 
 
@@ -130,22 +153,22 @@ def carousel_keyboard(index: int, total: int, player_id: int) -> InlineKeyboardM
     """Prev / Next nav + pick + back — shown under the card photo."""
     nav_row = []
     if index > 0:
-        nav_row.append(InlineKeyboardButton("◀️  Prev", callback_data=f"carousel:{index - 1}"))
+        nav_row.append(InlineKeyboardButton("‹  Prev", callback_data=f"carousel:{index - 1}"))
     nav_row.append(InlineKeyboardButton(f"{index + 1} / {total}", callback_data="noop"))
     if index < total - 1:
-        nav_row.append(InlineKeyboardButton("Next  ▶️", callback_data=f"carousel:{index + 1}"))
+        nav_row.append(InlineKeyboardButton("Next  ›", callback_data=f"carousel:{index + 1}"))
     return InlineKeyboardMarkup([
         nav_row,
-        [InlineKeyboardButton("✅  Engineer this card", callback_data=f"confirm:{player_id}")],
-        [InlineKeyboardButton("🔍  Search again", callback_data="nav:search"),
-         InlineKeyboardButton("🏠  Menu",         callback_data="nav:main")],
+        [InlineKeyboardButton("⚗️  Engineer This Card", callback_data=f"confirm:{player_id}")],
+        [InlineKeyboardButton("↩  New Search", callback_data="nav:search"),
+         InlineKeyboardButton("⌂  Menu",       callback_data="nav:main")],
     ])
 
 
 def confirm_keyboard(player_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅  Yes, engineer this card", callback_data=f"confirm:{player_id}")],
-        [InlineKeyboardButton("🔍  Back to results",         callback_data="nav:search")],
+        [InlineKeyboardButton("⚗️  Yes, engineer this card", callback_data=f"confirm:{player_id}")],
+        [InlineKeyboardButton("←  Back to results",          callback_data="nav:search")],
     ])
 
 
@@ -160,7 +183,7 @@ def category_keyboard(player_id: int) -> InlineKeyboardMarkup:
                 callback_data=f"cat:{player_id}:{cat_key}",
             ))
         rows.append(row)
-    rows.append([InlineKeyboardButton("⬅️  Back to search", callback_data="nav:search")])
+    rows.append([InlineKeyboardButton("←  Back to search", callback_data="nav:search")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -178,7 +201,7 @@ def upgrade_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
             ))
         rows.append(row)
     rows.append([InlineKeyboardButton(
-        "⬅️  Back to categories",
+        "←  DNA Categories",
         callback_data=f"confirm:{player_id}",
     )])
     return InlineKeyboardMarkup(rows)
@@ -188,14 +211,14 @@ def upgrade_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
 def result_keyboard(player_id: int, cat_key: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            "🔄  Try another upgrade",
+            "⟳  Different Upgrade",
             callback_data=f"cat:{player_id}:{cat_key}",
         )],
         [InlineKeyboardButton(
-            "🧬  New category",
+            "◈  New Category",
             callback_data=f"confirm:{player_id}",
         )],
-        [InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")],
+        [InlineKeyboardButton("⌂  Main Menu", callback_data="nav:main")],
     ])
 
 
@@ -235,10 +258,13 @@ async def nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("player_detail", None)
         await _safe_edit_text(
             query,
-            "🔍 *Player Search*\n\nType a player name:",
+            "🔬 *Player Search*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "↳ Type a player name below\n"
+            "  We'll scan the full database.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️  Back", callback_data="nav:main")]
+                [InlineKeyboardButton("←  Back", callback_data="nav:main")]
             ]),
         )
         return SEARCHING
@@ -247,7 +273,7 @@ async def nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit_text(
             query, GUIDE_TEXT, parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️  Back", callback_data="nav:main")]
+                [InlineKeyboardButton("←  Back", callback_data="nav:main")]
             ]),
         )
         return MAIN
@@ -274,7 +300,8 @@ async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not index:
         await context.bot.send_message(
             update.effective_chat.id,
-            "⚠️ Could not load player index. Please try again later.",
+            "⚠️ *Could not load player index.*\n\nPlease try again in a moment.",
+            parse_mode="Markdown",
             reply_markup=main_menu_keyboard(),
         )
         return MAIN
@@ -284,11 +311,13 @@ async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not results:
         await context.bot.send_message(
             update.effective_chat.id,
-            f"❌ No players found for *{query_text}*.\n\nTry a different name.",
+            f"❌ *No results for* _{query_text}_\n\n"
+            "Try a different spelling, or search\n"
+            "by nickname, club, or first name only.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔍  Search again", callback_data="nav:search")],
-                [InlineKeyboardButton("🏠  Main Menu",    callback_data="nav:main")],
+                [InlineKeyboardButton("↩  Search Again", callback_data="nav:search")],
+                [InlineKeyboardButton("⌂  Main Menu",   callback_data="nav:main")],
             ]),
         )
         return MAIN
@@ -412,7 +441,7 @@ async def player_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["player_id"] = player_id
 
     # Show a loading state
-    await _safe_edit_text(query, "⏳ Loading card…")
+    await _safe_edit_text(query, "⚗️ _Loading card…_", parse_mode="Markdown")
 
     # Fetch full detail (needed for image + position + cardType)
     try:
@@ -424,9 +453,10 @@ async def player_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not detail:
         await context.bot.send_message(
             update.effective_chat.id,
-            "❌ Could not load player data. Try another card.",
+            "⚠️ *Could not load card data.*\n\nTry a different result.",
+            parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔍  Back to results", callback_data="nav:search")],
+                [InlineKeyboardButton("↩  Back to results", callback_data="nav:search")],
             ]),
         )
         return MAIN
@@ -481,10 +511,11 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player_name = detail.get("name") or f"Player {player_id}"
     player_ovr  = detail.get("overall", "")
 
-    ovr_str = f" · {player_ovr} OVR" if player_ovr else ""
+    ovr_str = f"  ·  {player_ovr} OVR" if player_ovr else ""
     text = (
-        f"🧬 *{player_name}*{ovr_str}\n\n"
-        "Choose a *DNA category* to engineer:"
+        f"◈ *{player_name}*{ovr_str}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Choose a *DNA module* to engineer:"
     )
 
     await _safe_edit_text(
@@ -517,8 +548,10 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await _safe_edit_text(
         query,
-        f"*{cat['label']}*\n_{cat['desc']}_\n\n"
-        f"👤 *{player_name}* — choose an upgrade:",
+        f"{cat['label']}\n"
+        f"_{cat['desc']}_\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"◈ *{player_name}*  —  Pick your upgrade:",
         parse_mode="Markdown",
         reply_markup=upgrade_keyboard(player_id, cat_key),
     )
@@ -541,7 +574,7 @@ async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Unknown upgrade.", show_alert=True)
         return MAIN
 
-    await _safe_edit_text(query, "⚙️ Engineering your DNA build…")
+    await _safe_edit_text(query, "⚗️ _Engineering DNA build…_", parse_mode="Markdown")
 
     player_data = context.user_data.get("player_detail")
     if not player_data or "baseStats" not in player_data:
@@ -554,9 +587,10 @@ async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not player_data or "baseStats" not in player_data:
         await context.bot.send_message(
             update.effective_chat.id,
-            "❌ No stat data found for this player.",
+            "⚠️ *No stat data found for this player.*\n\nTry a different card.",
+            parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")]
+                [InlineKeyboardButton("⌂  Main Menu", callback_data="nav:main")]
             ]),
         )
         return MAIN
@@ -568,9 +602,10 @@ async def upgrade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Optimizer error for player %s: %s", player_id, exc)
         await context.bot.send_message(
             update.effective_chat.id,
-            "❌ DNA engineering failed. Please try again.",
+            "⚠️ *DNA engineering failed.*\n\nPlease try a different upgrade.",
+            parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠  Main Menu", callback_data="nav:main")]
+                [InlineKeyboardButton("⌂  Main Menu", callback_data="nav:main")]
             ]),
         )
         return MAIN
@@ -603,7 +638,7 @@ async def _safe_edit_text(query, text: str, **kwargs):
 
 async def unexpected_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Use the buttons to navigate ⬇️",
+        "◈ Use the buttons below to navigate.",
         reply_markup=main_menu_keyboard(),
     )
     return MAIN
