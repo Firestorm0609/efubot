@@ -752,10 +752,33 @@ def optimize_dna(
 
 
 def format_dna_result(result: Dict[str, Any]) -> str:
-    """Format DNA build result for Telegram Markdown."""
-    name  = result.get("player_name", "")
-    pos   = result.get("position", "")
-    ovr   = result.get("overall", 0)
+    """
+    Format DNA build result for Telegram Markdown.
+
+    Layout mirrors the eFootball mobile training screen:
+      Each active training category is shown as one block:
+        [icon]  ‹ N ›  (X PP)
+          Stat Name   base → FINAL  +gain
+          Stat Name   base → FINAL  +gain
+    Inactive categories are listed compactly at the bottom for reference.
+    """
+    # ── Category icons (closest text approximations to in-game icons) ─────────
+    CAT_ICONS = {
+        "cat_finish": "🎯",   # crosshair  → Finishing / Set Pieces / Curl
+        "cat_pass":   "⚽",   # ball       → Low Pass / Lofted Pass
+        "cat_drib":   "🔺",   # triangle   → Dribbling / Ball Control / Tight Poss
+        "cat_aware":  "🔀",   # arrows     → Off. Awareness / Accel / Balance
+        "cat_power":  "👟",   # boot       → Kicking Power / Speed / Stamina
+        "cat_aerial": "⏫",   # chevrons   → Heading / Jumping / Physical Contact
+        "cat_defend": "🛡️",   # shield     → Def. Awareness / Tackling / Aggression / Def. Engagement
+        "cat_gk1":    "🧤",   # glove 1   → GK Awareness / Jumping
+        "cat_gk2":    "🧤",   # glove 2   → GK Deflecting / GK Reach
+        "cat_gk3":    "🧤",   # glove 3   → GK Catching / GK Reflexes
+    }
+
+    name = result.get("player_name", "")
+    pos  = result.get("position", "")
+    ovr  = result.get("overall", 0)
 
     lines = [
         f"🧬 *{result['upg_label']}*",
@@ -763,12 +786,12 @@ def format_dna_result(result: Dict[str, Any]) -> str:
         "",
     ]
 
+    # Player identity
     identity = f"👤 *{name}*"
     if pos: identity += f" · {pos}"
     if ovr: identity += f" · {ovr} OVR"
     lines.append(identity)
 
-    # Additional positions (e.g. "Also: RMF ★★  AMF ★★★")
     add_pos = result.get("additional_positions", [])
     if add_pos:
         fam_stars = {1: "★", 2: "★★", 3: "★★★"}
@@ -777,28 +800,20 @@ def format_dna_result(result: Dict[str, Any]) -> str:
         if pos_parts:
             lines.append(f"   Also: {' · '.join(pos_parts)}")
 
-    # Team
     team = result.get("team", "")
     if team:
         lines.append(f"🏟 {team}")
 
-    # Physical / foot info
-    foot_line_parts = []
+    foot_parts = []
     pfoot = result.get("preferred_foot", "")
-    if pfoot:
-        foot_line_parts.append(f"{pfoot} foot")
+    if pfoot: foot_parts.append(f"{pfoot} foot")
     wfa = result.get("weak_foot_accuracy")
     wfu = result.get("weak_foot_usage")
-    if wfa is not None:
-        stars = "★" * wfa + "☆" * (4 - wfa)
-        foot_line_parts.append(f"Weak foot acc {stars}")
-    if wfu is not None:
-        stars = "★" * wfu + "☆" * (4 - wfu)
-        foot_line_parts.append(f"usage {stars}")
-    if foot_line_parts:
-        lines.append("👟 " + "  ·  ".join(foot_line_parts))
+    if wfa is not None: foot_parts.append(f"Weak foot acc {'★'*wfa}{'☆'*(4-wfa)}")
+    if wfu is not None: foot_parts.append(f"usage {'★'*wfu}{'☆'*(4-wfu)}")
+    if foot_parts:
+        lines.append("👟 " + "  ·  ".join(foot_parts))
 
-    # Player skills
     skills = result.get("skills", [])
     if skills:
         lines.append(f"⚙️ Skills: {', '.join(skills)}")
@@ -808,60 +823,77 @@ def format_dna_result(result: Dict[str, Any]) -> str:
 
     lines.append("")
     lines.append(f"{result['cat_label']}  ·  👑 *GOAT Mutation DNA*")
-    lines.append(f"Budget: *{result['budget']} PP* (Level {result['level_cap']}, {(result['level_cap']-1)*2} PP)")
+    lines.append(f"Budget: *{result['budget']} PP*  (Level {result['level_cap']})")
     lines.append("")
 
-    # --- Training click plan ---
-    if result.get("clicks"):
-        lines.append("*TRAINING PLAN:*")
-        for gcat_id, n_clicks in result["clicks"].items():
-            gcat_label = TRAINING_CATEGORIES[gcat_id]["label"]
-            pp_cost = sum(get_click_cost(i) for i in range(n_clicks))
-            lines.append(f"  {gcat_label}")
-            lines.append(f"    ×{n_clicks}  ({pp_cost} PP)")
-        lines.append("")
+    # ── Main section: one block per active training category ──────────────────
+    # Gather all stat gains across allocations + phase2 + bonus
+    all_gains: Dict[str, int] = {}
+    for d in (result.get("allocations", {}),
+              result.get("phase2_gains", {}),
+              result.get("bonus_gains", {})):
+        for k, v in d.items():
+            all_gains[k] = all_gains.get(k, 0) + v
 
-    # --- Phase 1: upgrade stats ---
-    lines.append("*PHASE 1 — UPGRADE STATS:*")
-    if result["allocations"]:
-        sorted_allocs = sorted(result["allocations"].items(), key=lambda x: -x[1])
-        for stat_key, pts in sorted_allocs:
-            label = STAT_LABELS.get(stat_key, stat_key)
-            base  = result["base_stats"].get(stat_key, 0)
-            final = result["final_stats"].get(stat_key, 0)
-            bar   = "█" * min(pts, 10)
-            lines.append(f"  `{label:<20}` {base} → *{final}* `+{pts}` {bar}")
-    else:
-        lines.append("  _All target stats already at cap (99)_")
+    clicks     = result.get("clicks", {})
+    base_stats = result.get("base_stats",  {})
+    final_stats= result.get("final_stats", {})
 
-    # --- Phase 2: position-relevant stats ---
-    if result.get("phase2_gains"):
-        lines.append("")
-        lines.append("*PHASE 2 — POSITION STATS:*")
-        sorted_p2 = sorted(result["phase2_gains"].items(), key=lambda x: -x[1])
-        for stat_key, pts in sorted_p2:
-            label = STAT_LABELS.get(stat_key, stat_key)
-            base  = result["base_stats"].get(stat_key, 0)
-            final = result["final_stats"].get(stat_key, 0)
-            bar   = "█" * min(pts, 10)
-            lines.append(f"  `{label:<20}` {base} → *{final}* `+{pts}` {bar}")
+    active_cats   = {cid: n for cid, n in clicks.items() if n > 0}
+    inactive_cats = [cid for cid in TRAINING_CATEGORIES if cid not in active_cats]
 
-    # --- Bonus side-effect stats ---
-    if result.get("bonus_gains"):
-        lines.append("")
-        lines.append("*BONUS GAINS:*")
-        for stat_key, pts in sorted(result["bonus_gains"].items(), key=lambda x: -x[1]):
-            label = STAT_LABELS.get(stat_key, stat_key)
-            base  = result["base_stats"].get(stat_key, 0)
-            final = result["final_stats"].get(stat_key, 0)
-            lines.append(f"  `{label:<20}` {base} → *{final}* `+{pts}`")
+    if active_cats:
+        lines.append("*📋 TRAINING PLAN*")
+        lines.append("┄" * 28)
 
-    lines.append("")
+        for cat_id, n_clicks in active_cats.items():
+            gcat      = TRAINING_CATEGORIES[cat_id]
+            icon      = CAT_ICONS.get(cat_id, "●")
+            pp_cost   = sum(get_click_cost(i) for i in range(n_clicks))
+            stat_keys = gcat["stats"]
+
+            # Header row: icon  ‹ N ›  (X PP)
+            lines.append(f"{icon}  ‹ *{n_clicks}* ›   `{pp_cost} PP`")
+
+            # One stat row per stat in this category
+            for sk in stat_keys:
+                label = STAT_LABELS.get(sk, sk)
+                base  = base_stats.get(sk, 0)
+                final = final_stats.get(sk, base)
+                gain  = final - base
+
+                # Pad label to 22 chars for alignment
+                label_pad = f"{label:<22}"
+
+                if gain > 0:
+                    lines.append(f"   `{label_pad}` {base} → *{final}*  `+{gain}`")
+                else:
+                    # Stat is in this category but not upgraded (already capped)
+                    lines.append(f"   `{label_pad}` {base} → *{final}*")
+
+            lines.append("")   # blank line between categories
+
+    # ── Summary footer ────────────────────────────────────────────────────────
+    lines.append("┄" * 28)
     pct = int(result["points_used"] / result["budget"] * 100) if result["budget"] else 0
     lines.append(
-        f"⚡ *{result['points_used']}* / {result['budget']} PP used ({pct}%)"
+        f"⚡ *{result['points_used']}* / {result['budget']} PP  ({pct}%)"
         f"  ·  {result['points_remaining']} remaining"
     )
+
+    # Inactive categories (compact, greyed with dashes)
+    if inactive_cats:
+        lines.append("")
+        inactive_labels = []
+        for cid in inactive_cats:
+            icon  = CAT_ICONS.get(cid, "●")
+            stats = "  ·  ".join(
+                STAT_LABELS.get(sk, sk)
+                for sk in TRAINING_CATEGORIES[cid]["stats"]
+            )
+            inactive_labels.append(f"{icon} ‹ 0 ›  _{stats}_")
+        lines.append("*Unused categories:*")
+        lines.extend(inactive_labels)
 
     if result.get("mutation_note"):
         lines.append("")
